@@ -40,11 +40,32 @@ def fix_temperature(df):
         df = add_flag(df, missing, f"TEMP{num}_MISSING_-999")
         df.loc[disconnected | missing, col] = np.nan
 
-    # we have 2 temp sensors on the panel
-    # if one is bad, take the value from the other one
-    # if both are bad, it stays NaN for now
+    # Use the other temperature sensor if one is faulty; if both are faulty, keep the value as NaN
     df["panel_temp1_c"] = df["panel_temp1_c"].fillna(df["panel_temp2_c"])
     df["panel_temp2_c"] = df["panel_temp2_c"].fillna(df["panel_temp1_c"])
+    return df
+
+def add_session_id(df):
+    # A new session starts whenever the gap between two readings exceeds 60 seconds.
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"])
+    df = df.sort_values(["device_id", "timestamp_utc"]).copy()
+
+    gap = df.groupby("device_id")["timestamp_utc"].diff().dt.total_seconds()
+    new_session = gap.isna() | (gap > 60)
+    df["session_id"] = new_session.cumsum()
+    return df
+
+
+def fix_current(df):
+    # Use the session median to detect reversed current: flip reversed sessions, but set small negative noise to 0.
+    session_median = df.groupby("session_id")["current_ma"].transform("median")
+    reversed_wire = session_median < 0
+
+    df = add_flag(df, reversed_wire, "CURRENT_SIGN_REVERSED")
+    df.loc[reversed_wire, "current_ma"] = -df.loc[reversed_wire, "current_ma"]
+
+    # after flipping, any small negative left is just noise
+    df.loc[df["current_ma"] < 0, "current_ma"] = 0.0
     return df
 
 
@@ -55,5 +76,7 @@ def run_quality_checks(raw):
 
     df = remove_duplicates(df)
     df = fix_temperature(df)
+    df = add_session_id(df)
+    df = fix_current(df)
 
     return df
