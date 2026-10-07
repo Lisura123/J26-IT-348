@@ -19,9 +19,6 @@ def add_flag(df, rows, flag_name):
 
 
 def remove_duplicates(df):
-    # MQTT sometimes sends the same reading two times (when ACK is lost)
-    # same record_id, different message_id
-    # keep the first one and flag it
     dup_ids = df[df["record_id"].duplicated()]["record_id"].unique()
 
     df = df.drop_duplicates(subset="record_id", keep="first").copy()
@@ -30,8 +27,6 @@ def remove_duplicates(df):
 
 
 def fix_temperature(df):
-    # -127 and -999 are not real temperatures
-    # change them to NaN and add a flag
     for num, col in [(1, "panel_temp1_c"), (2, "panel_temp2_c")]:
         disconnected = df[col] == TEMP_DISCONNECTED
         missing = df[col] == TEMP_MISSING
@@ -68,6 +63,30 @@ def fix_current(df):
     df.loc[df["current_ma"] < 0, "current_ma"] = 0.0
     return df
 
+def fix_spikes(df):
+    checks = [
+        ("voltage_v", "SPIKE_VOLTAGE", 0.1),
+        ("current_ma", "SPIKE_CURRENT", 3.0),
+        ("irradiance_lux", "SPIKE_IRRADIANCE", 1000.0),
+    ]
+
+    for col, flag_name, min_jump in checks:
+        neighbour_median = df.groupby("session_id")[col].transform(
+            lambda s: s.rolling(5, center=True, min_periods=1).median()
+        )
+        jump = (df[col] - neighbour_median).abs()
+
+        spike = (jump > 0.5 * neighbour_median.abs()) & (jump > min_jump)
+
+        df = add_flag(df, spike, flag_name)
+        df.loc[spike, col] = neighbour_median[spike]
+    return df
+
+
+def fix_humidity(df):
+    df["humidity_pct"] = df["humidity_pct"].clip(upper=100)
+    return df
+
 
 def run_quality_checks(raw):
     # main function - runs all the checks one by one
@@ -78,5 +97,7 @@ def run_quality_checks(raw):
     df = fix_temperature(df)
     df = add_session_id(df)
     df = fix_current(df)
+    df = fix_spikes(df)
+    df = fix_humidity(df)
 
     return df
