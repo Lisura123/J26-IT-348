@@ -1,0 +1,14 @@
+﻿services:
+  influxdb:
+    image: influxdb:2.7
+    ports: ["8087:8086"]
+    volumes: ["influxdb-data:/var/lib/influxdb2"]
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USER}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: j26
+      DOCKER_INFLUXDB_INIT_BUCKET: solar_pv
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+volumes:
+  influxdb-data:
