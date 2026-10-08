@@ -1,0 +1,11 @@
+rule_id,trigger,recommended_action,priority,target_response_h,assigned_role
+R01,physics_cause = SHORT_CIRCUIT,Keep panel isolated; inspect wiring/connectors for a short before reconnecting,CRITICAL,2,ENGINEER
+R02,physics_cause = OPEN_CIRCUIT,"Check connectors, fuse and load/controller connection",HIGH,8,ENGINEER
+R03,physics_cause = PARTIAL_SHADING,Find and remove the shading object; check hotspot probe after,MEDIUM,48,ENGINEER
+R04,physics_cause = DUST or soiling loss > 8 %,Schedule panel cleaning,MEDIUM,72,ENGINEER
+R05,UNEXPLAINED_LOSS on > 3 consecutive readings,Inspect panel; compare with neighbouring site; review sensors,MEDIUM,48,ENGINEER
+R06,EWMA/CUSUM drift alarm on performance ratio,"Plan I-V check; look for degradation, corrosion (fill factor) or cracks",LOW,168,ENGINEER
+R07,Temperature probe reads -127 / -999,Reseat or replace DS18B20 probe,LOW,168,ENGINEER
+R08,model_up_to_date = FALSE for > 24 h,Check OTA status / connectivity with Member 3 backend,LOW,24,ADMIN
+R09,link_quality = POOR or OFFLINE for > 6 h,Check gateway / antenna / coverage,MEDIUM,24,ADMIN
+R10,Monthly,Send performance summary report,INFO,720,MANAGER

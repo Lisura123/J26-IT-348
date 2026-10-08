@@ -1,0 +1,4 @@
+user_id,display_name,email,role,site_access,display_timezone,created_at_utc,active
+USR-001,Admin User,admin@example.com,ADMIN,ALL,Asia/Colombo,2026-03-16T03:30:00Z,True
+USR-002,Field Engineer,engineer@example.com,ENGINEER,ALL,Asia/Colombo,2026-03-16T03:30:00Z,True
+USR-003,Operations Manager,manager@example.com,MANAGER,ALL,Asia/Colombo,2026-03-16T03:30:00Z,True

@@ -1,0 +1,40 @@
+site_id,panel_id,event_time_utc,event_type,performed_by,notes
+SITE-E,PV-E01,2026-04-03T04:12:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-D,PV-D01,2026-04-03T04:57:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-C,PV-C01,2026-04-04T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-A,PV-A01,2026-04-07T03:34:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-F,PV-F01,2026-04-08T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-C,PV-C01,2026-04-09T04:27:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-04-11T03:35:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-A,PV-A01,2026-04-11T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-E,PV-E01,2026-04-13T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-D,PV-D01,2026-04-13T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-B,PV-B01,2026-04-24T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-F,PV-F01,2026-05-01T04:38:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-05-06T03:10:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-C,PV-C01,2026-06-03T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-E,PV-E01,2026-06-03T04:51:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-D,PV-D01,2026-06-06T04:30:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-E,PV-E01,2026-06-06T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-C,PV-C01,2026-06-08T04:01:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-06-10T04:54:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-06-11T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-A,PV-A01,2026-06-11T04:51:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-F,PV-F01,2026-06-13T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-D,PV-D01,2026-06-21T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-A,PV-A01,2026-06-23T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-F,PV-F01,2026-07-04T03:41:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-07-08T03:54:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-C,PV-C01,2026-08-05T03:36:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-E,PV-E01,2026-08-07T03:36:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-D,PV-D01,2026-08-07T05:24:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-C,PV-C01,2026-08-08T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-B,PV-B01,2026-08-09T02:35:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-A,PV-A01,2026-08-09T03:22:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-D,PV-D01,2026-08-11T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-B,PV-B01,2026-08-12T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-E,PV-E01,2026-08-14T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-F,PV-F01,2026-08-17T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-A,PV-A01,2026-08-20T04:30:00Z,VISUAL_INSPECTION,USR-002,"Scheduled visual inspection of panel, wiring and enclosure"
+SITE-F,PV-F01,2026-08-30T02:46:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
+SITE-B,PV-B01,2026-09-11T04:13:00Z,PANEL_CLEANING,USR-002,Routine cleaning with soft brush and water
