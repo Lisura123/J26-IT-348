@@ -38,3 +38,7 @@ if __name__ == "__main__":
     print("backend status ", load_backend_status().shape)
     print("weight updates ", len(load_weight_updates()))
     print(load_link_metrics()["timestamp_utc"].dtype)  # datetime64[ns, UTC]
+
+def load_global_history():
+    with open(DATA_DIR / "fl_global_model_history.json", encoding="utf-8") as f:
+        return json.load(f)["versions"]
