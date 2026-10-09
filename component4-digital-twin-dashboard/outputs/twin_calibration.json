@@ -1,0 +1,14 @@
+{
+ "faiman_u0": 19.116,
+ "faiman_u1": 4.039,
+ "rmse_with_wind_c": 1.423,
+ "faiman_u0_no_wind": 35.806,
+ "rmse_no_wind_c": 2.358,
+ "rmse_improvement_from_wind_pct": 39.6,
+ "pvlib_default_u0": 25.0,
+ "pvlib_default_u1": 6.84,
+ "rmse_pvlib_default_c": 4.655,
+ "n_fit_rows": 102705,
+ "fitted_on": "member4_longterm_5min.csv, unsaturated readings with G>200 W/m2 (lux/120), target = mean of the two panel probes",
+ "wind_source": "weather_hourly.csv wind_speed_10m_ms, linearly interpolated (no anemometer)"
+}
