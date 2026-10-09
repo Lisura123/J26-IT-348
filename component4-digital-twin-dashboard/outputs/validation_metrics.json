@@ -1,0 +1,63 @@
+{
+ "power_normal_all": {
+  "n": 116558,
+  "rmse": 15.4231,
+  "mae": 10.0077,
+  "bias": -3.7377,
+  "r2": 0.9846,
+  "mape_pct": 5.8107
+ },
+ "power_normal_sunny": {
+  "n": 76557,
+  "rmse": 18.7822,
+  "mae": 13.6678,
+  "bias": -6.1719,
+  "r2": 0.9639,
+  "mape_pct": 5.5642
+ },
+ "ablation_true_inputs": {
+  "n": 116558,
+  "rmse": 0.0226,
+  "mae": 0.0183,
+  "bias": 0.0002,
+  "r2": 1.0,
+  "mape_pct": 0.0166
+ },
+ "irradiance_sunny": {
+  "n": 104289,
+  "rmse": 39.1268,
+  "mae": 27.7119,
+  "bias": -11.2062,
+  "r2": 0.9629
+ },
+ "temp_with_wind": {
+  "n": 104289,
+  "rmse": 1.4657,
+  "mae": 1.0959,
+  "bias": 0.2214,
+  "r2": 0.959
+ },
+ "temp_no_wind": {
+  "n": 104289,
+  "rmse": 2.3765,
+  "mae": 1.8064,
+  "bias": 0.1498,
+  "r2": 0.8922
+ },
+ "temp_pvlib_default": {
+  "n": 104289,
+  "rmse": 4.7049,
+  "mae": 3.9797,
+  "bias": -3.9785,
+  "r2": 0.5774
+ },
+ "temp_improvement_from_wind_pct": 38.3,
+ "power_rmse_by_site": {
+  "SITE-A": 17.12,
+  "SITE-B": 26.01,
+  "SITE-C": 18.26,
+  "SITE-D": 18.31,
+  "SITE-E": 16.21,
+  "SITE-F": 15.14
+ }
+}
