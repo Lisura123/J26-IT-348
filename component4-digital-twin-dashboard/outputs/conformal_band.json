@@ -1,0 +1,7 @@
+{
+ "alpha": 0.1,
+ "n_calibration": 103304,
+ "ratio_low": 0.8788533857435342,
+ "ratio_high": 1.1086543664394866,
+ "calibrated_on": "member4_longterm_5min.csv NORMAL rows, G > 50 W/m2"
+}

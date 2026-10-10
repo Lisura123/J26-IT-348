@@ -1,0 +1,35 @@
+{
+ "alpha": 0.1,
+ "n_normal_rows": 103304,
+ "random_split": {
+  "alpha": 0.1,
+  "n_calibration": 51331,
+  "ratio_low": 0.8792946280245186,
+  "ratio_high": 1.108847204857475,
+  "n_test": 51973,
+  "test_coverage": 0.8984
+ },
+ "random_split_coverage_by_site": {
+  "SITE-A": 0.906,
+  "SITE-B": 0.8962,
+  "SITE-C": 0.9186,
+  "SITE-D": 0.8964,
+  "SITE-E": 0.8129,
+  "SITE-F": 0.9409
+ },
+ "temporal_split": {
+  "alpha": 0.1,
+  "n_calibration": 72742,
+  "ratio_low": 0.8786874321093914,
+  "ratio_high": 1.1127119853791692,
+  "n_test": 30562,
+  "test_coverage": 0.9204
+ },
+ "deployed_band": {
+  "alpha": 0.1,
+  "n_calibration": 103304,
+  "ratio_low": 0.8788533857435342,
+  "ratio_high": 1.1086543664394866,
+  "calibrated_on": "member4_longterm_5min.csv NORMAL rows, G > 50 W/m2"
+ }
+}
