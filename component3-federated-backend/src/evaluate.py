@@ -35,10 +35,12 @@ def run_metrics(df):
                 t90=time_to(df, 0.90), t95=time_to(df, 0.95),
                 bytes=int(df.bytes_attempted.sum()), lora_s=float(df.lora_transfer_s.sum()),
                 attempted=int(df.clients_selected.sum()),
+                used=int((df.clients_received + df.late_used).sum()),
                 lost=int((df.clients_failed + df.clients_late - df.late_used).sum()), **per)
 
 def fmt(x, nd=4):
-    return f"{np.mean(x):.{nd}f} ± {np.std(x):.{nd}f}"
+    sd = np.std(x, ddof=1) if len(x) > 1 else 0.0
+    return f"{np.mean(x):.{nd}f} ± {sd:.{nd}f}"
 
 def summarize(runs):
     out = []
@@ -49,7 +51,8 @@ def summarize(runs):
                "worst class acc": fmt(g.worst_class),
                "bytes": fmt(g.bytes, 0),
                "LoRa transfer s": fmt(g.lora_s, 0),
-               "lost updates": fmt(g.lost, 1)}
+               "lost updates": fmt(g.lost, 1),
+               "updates used": fmt(g.used, 1),}
         for col, label in (("t90", "time to 90% (h)"), ("t95", "time to 95% (h)")):
             ok = g[col].dropna()
             row[label] = "not reached" if len(ok) == 0 else f"{fmt(ok, 1)} [{len(ok)}/{n}]"
@@ -62,11 +65,18 @@ def main():
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--activation", default="tanh", choices=["relu", "tanh", "sigmoid"])
     ap.add_argument("--ablation", action="store_true")
+    ap.add_argument("--only", default="", help='comma separated config names, e.g. "baseline,full method"')
+    ap.add_argument("--tag", default="", help="suffix for the output files, keeps earlier results safe")
     a = ap.parse_args()
 
     configs = dict(MAIN)
     if a.ablation:
         configs.update(ABLATION)
+    if a.only:
+        keep = [x.strip() for x in a.only.split(",")]
+        configs = {k: v for k, v in {**MAIN, **ABLATION}.items() if k in keep}
+    suffix = f"_{a.tag}" if a.tag else ""
+
     rows, total, k = [], len(configs) * a.seeds, 0
     for name, kw in configs.items():
         for seed in range(a.seeds):
@@ -77,13 +87,12 @@ def main():
     runs = pd.DataFrame(rows)
     summ = summarize(runs)
     RESULTS_DIR.mkdir(exist_ok=True)
-    runs.to_csv(RESULTS_DIR / f"eval_{a.scenario}_runs.csv", index=False)
-    summ.to_csv(RESULTS_DIR / f"eval_{a.scenario}_summary.csv", index=False)
+    runs.to_csv(RESULTS_DIR / f"eval_{a.scenario}{suffix}_runs.csv", index=False)
+    summ.to_csv(RESULTS_DIR / f"eval_{a.scenario}{suffix}_summary.csv", index=False)
     pd.set_option("display.width", 250, "display.max_columns", 20)
     print(f"\n=== {a.scenario} scenario, {a.seeds} seeds, mean ± std ===")
     print(summ.to_string(index=False))
     print("\nper-class final accuracy (mean over seeds):")
     print(runs.groupby("config", sort=False)[[f"acc_{l}" for l in pv_data.LABELS]].mean().round(3).to_string())
-
 if __name__ == "__main__":
     main()

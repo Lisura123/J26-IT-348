@@ -1,4 +1,4 @@
-"""One FL engine for Steps 5 to 9: compression, scheduling, async aggregation and network scenarios."""
+"""One FL engine for Steps 5 to 10: compression, scheduling, async aggregation, network scenarios, records."""
 import argparse
 import numpy as np
 import pandas as pd
@@ -11,6 +11,7 @@ from src.network_replay import NetworkReplay, lora_airtime, lora_fragments, DUTY
 from src import scenarios as scen
 from src.scheduler import Scheduler
 
+LORA_MW = 120.0          # LoRa radio power: radio_energy_mj / airtime_s = 120 in the shared trace
 STALE_FLOOR = 0.25      # staleness factor never drops below this
 FAIR_GAMMA = 1.0        # fairness boost: factor = 1 + GAMMA * (1 - delivery rate)
 
@@ -44,7 +45,12 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
     ok = {s: 0 for s in pv_data.SITES}          # on-time deliveries so far
     tries = {s: 0 for s in pv_data.SITES}       # uploads attempted so far
     pending = []                                # late updates still on their way
-    rows, state_rows = [], []
+    rows, state_rows, updates = [], [], []
+    models = {"v1.0": {n: np.asarray(v).tolist() for n, v in w.items()}}
+    shared_tx = dl.load_transmissions()
+    energy_ref = shared_tx.groupby("protocol").radio_energy_mj.median()     # WiFi / LTE energy per 297 byte upload
+    class_counts = {s_: {pv_data.LABELS[c]: int((site_data[s_][1] == c).sum()) for c in range(5)}
+                    for s_ in pv_data.SITES}
     agg_name = "FedAvg" if not (async_late or staleness or fairness) else "RelAsync"
 
     def encode(x, protocol, sf):
@@ -52,12 +58,13 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
             return int8_dense(x), DENSE_INT8_BYTES, "int8"
         return compress(x, protocol, sf)
 
-    def log(r, published, selected, rec, late, failed, late_used, samples, b_att, b_rec, lora_s):
+    def log(r, published, selected, rec, late, failed, late_used, samples, b_att, b_rec, lora_s, l2=0.0):
         loss, acc, per = mlp.evaluate(w, Xv, yv, activation)
         row = dict(round_id=r, global_model_version=f"v1.{r}", aggregation=agg_name,
                    clients_selected=len(selected), clients_received=rec, total_samples=samples,
                    global_val_loss=round(loss, 4), global_val_accuracy=round(acc, 4),
                    published_at_utc=published, clients_late=late, clients_failed=failed,
+                   mean_update_l2_norm=round(l2, 5), model_size_int8_bytes=229,
                    late_used=late_used, compression_method=compression,
                    bytes_attempted=b_att, bytes_received=b_rec, lora_transfer_s=round(lora_s, 1),
                    selected_sites="".join(s[-1] for s in selected))
@@ -85,10 +92,12 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
         got, late, failed, b_att, b_rec, lora_s = [], 0, 0, 0, 0, 0.0
         arrivals, outcome = [], {}
         for site in selected:
+            Xs, ys = site_data[site]
+            lb, ab, _ = mlp.evaluate(w, Xs, ys, activation)
             weights, n, _ = clients[site].fit(to_list(w), {"round": r})
-            x = mlp.flatten(from_list(weights)) - w_vec
-            if error_feedback:
-                x = x + residual[site]
+            la, aa, _ = mlp.evaluate(from_list(weights), Xs, ys, activation)
+            x_raw = mlp.flatten(from_list(weights)) - w_vec
+            x = x_raw + residual[site] if error_feedback else x_raw
             t = trace.loc[(r, site)]
             if sp is None:                                   # shared trace
                 scheduled = t.scheduled_send_utc
@@ -114,14 +123,41 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
             b_att += payload
             rate = (ok[site] + 1) / (tries[site] + 2)       # delivery rate known BEFORE this upload
             tries[site] += 1
+            status = "FAILED" if will_fail else ("LATE" if arrival > deadline else "RECEIVED")
+            airtime = o["airtime_s"]
+            energy = LORA_MW * airtime if t.protocol == "LORA" else float(energy_ref[t.protocol]) * payload / 297.0
+            rec = dict(update_id=f"R{r:02d}-{site}", round_id=r, site_id=site,
+                       device_id=f"ESP32-{site[-1]}01", base_model_version=f"v1.{r - 1}", status=status,
+                       num_samples=int(n), local_epochs=3, batch_size=32, learning_rate=0.05,
+                       local_loss_before=round(lb, 4), local_loss_after=round(la, 4),
+                       local_accuracy_before=round(ab, 4), local_accuracy_after=round(aa, 4),
+                       delta_l2_norm=round(float(np.linalg.norm(sent)), 5),
+                       float_delta_l2_norm=round(float(np.linalg.norm(x_raw)), 5),
+                       quantization_error_l2=round(float(np.linalg.norm(x - sent)), 6),
+                       delta_int8_scale=(round(float(np.abs(sent).max() / 127.0), 8) if _m != "float32" else None),
+                       payload_bytes=int(payload), class_counts=str(class_counts[site]).replace("'", '"'),
+                       protocol=t.protocol, retries=int(retries),
+                       transfer_duration_s=round(float(transfer), 2),
+                       scheduled_send_utc=scheduled, deadline_utc=deadline,
+                       sent_at_utc=o["tx_start_utc"], received_at_utc=(arrival if status != "FAILED" else None),
+                       tx_start_utc=o["tx_start_utc"], tx_end_utc=arrival,
+                       waited_offline_s=round(float(o["waited_offline_s"]), 1),
+                       lora_sf=sf, fragments=int(o["fragments"]),
+                       airtime_s=(round(float(airtime), 3) if airtime is not None else None),
+                       duty_cycle_wait_s=round(float(o["duty_cycle_wait_s"]), 1),
+                       radio_energy_mj=round(float(energy), 1), delivered=status != "FAILED",
+                       compression_method=_m, staleness=None,
+                       reliability_score=(round(rel[site], 4) if sched else None),
+                       aggregation_weight=0.0, used_in_round=None)
+            updates.append(rec)
             if will_fail:
                 failed += 1; outcome[site] = False
             elif arrival > deadline:
                 late += 1; outcome[site] = False
                 if async_late:                               # keep it, it arrives after the deadline
-                    pending.append(dict(site=site, n=n, delta=sent, base=r, arrival=arrival, rate=rate))
+                    pending.append(dict(site=site, n=n, delta=sent, base=r, arrival=arrival, rate=rate, rec=rec))
             else:
-                got.append(dict(site=site, n=n, delta=sent, tau=0, rate=rate)); b_rec += payload
+                got.append(dict(site=site, n=n, delta=sent, tau=0, rate=rate, rec=rec)); b_rec += payload
                 outcome[site] = True; arrivals.append(arrival)
                 ok[site] += 1
 
@@ -130,9 +166,10 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
             close = max(arrivals)
 
         late_used = 0
+        l2 = 0.0
         if async_late:
             for p in [p for p in pending if p["arrival"] <= close]:
-                got.append(dict(site=p["site"], n=p["n"], delta=p["delta"], tau=r - p["base"], rate=p["rate"]))
+                got.append(dict(site=p["site"], n=p["n"], delta=p["delta"], tau=r - p["base"], rate=p["rate"], rec=p["rec"]))
                 b_rec += 0; late_used += 1
                 pending.remove(p)
 
@@ -142,6 +179,11 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
             norm = float(sum(g["n"] * fi for g, fi in zip(got, f)))
             step = sum(((g["n"] * fi * si) / norm) * g["delta"] for g, fi, si in zip(got, f, s_))
             w = mlp.unflatten(w_vec + step)
+            for g, fi, si in zip(got, f, s_):
+                g["rec"]["aggregation_weight"] = round((g["n"] * fi * si) / norm, 6)
+                g["rec"]["staleness"] = g["tau"]
+                g["rec"]["used_in_round"] = r
+            l2 = float(np.mean([np.linalg.norm(g["delta"]) for g in got]))
 
         if sched:
             for s in selected:
@@ -154,13 +196,18 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
                 end = nr.offline_until(s, opened)
                 if end is not None:
                     exp += (end - opened).total_seconds()
-                state_rows.append(dict(round_id=r, site_id=s, reliability=round(rel[s], 4),
+                state_rows.append(dict(round_id=r, site_id=s, device_id=f"ESP32-{s[-1]}01", protocol=t.protocol, time_utc=opened,
+                                       reliability=round(rel[s], 4),
                                        expected_upload_s=round(exp, 1), age=sched.age[s],
                                        participation=sched.part[s], selected=int(s in selected)))
         log(r, close.isoformat(), selected, len(got) - late_used, late, failed, late_used,
-            int(sum(g["n"] for g in got)), b_att, b_rec, lora_s)
+            int(sum(g["n"] for g in got)), b_att, b_rec, lora_s, l2)
+        models[f"v1.{r}"] = {n: np.asarray(v).tolist() for n, v in w.items()}
 
     df = pd.DataFrame(rows)
+    df.attrs["updates"] = pd.DataFrame(updates)
+    df.attrs["state"] = pd.DataFrame(state_rows)
+    df.attrs["models"] = models
     tag = tag or (f"{compression}{'_ef' if error_feedback else ''}{'_sched' if scheduler else ''}"
                   f"{'_async' if async_late else ''}{'_stale' if staleness else ''}{'_fair' if fairness else ''}{'' if scenario == 'trace' else '_' + scenario}")
     if not save:
