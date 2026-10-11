@@ -45,7 +45,7 @@ round_id,site_id,reliability,expected_upload_s,age,participation,selected
 8,SITE-B,0.8674,2.0,0,8,1
 8,SITE-C,0.9719,150.4,0,8,1
 8,SITE-D,0.9715,2.0,0,8,1
-8,SITE-E,,16598.2,1,7,0
+8,SITE-E,0.4876,16598.2,1,7,0
 8,SITE-F,0.9461,2.0,0,8,1
 9,SITE-A,0.977,2.0,0,9,1
 9,SITE-B,0.9036,2.0,0,9,1
@@ -61,9 +61,9 @@ round_id,site_id,reliability,expected_upload_s,age,participation,selected
 10,SITE-F,0.9663,2.0,0,10,1
 11,SITE-A,0.9789,2.0,0,11,1
 11,SITE-B,0.9452,2.0,0,11,1
-11,SITE-C,,1770.4,1,10,0
+11,SITE-C,0.4958,1770.4,1,10,0
 11,SITE-D,0.9762,2.0,0,11,1
-11,SITE-E,,6860.3,1,9,0
+11,SITE-E,0.4939,6860.3,1,9,0
 11,SITE-F,0.8064,2.0,0,11,1
 12,SITE-A,0.9792,2.0,0,12,1
 12,SITE-B,0.953,2.0,0,12,1

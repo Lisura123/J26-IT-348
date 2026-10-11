@@ -1,4 +1,4 @@
-"""One FL engine for Steps 5 to 8: compression, scheduling and async aggregation are switches."""
+"""One FL engine for Steps 5 to 9: compression, scheduling, async aggregation and network scenarios."""
 import argparse
 import numpy as np
 import pandas as pd
@@ -7,7 +7,8 @@ from src import data_loader as dl, mlp, pv_data
 from src.compression import compress, int8_dense, DENSE_INT8_BYTES
 from src.fl_baseline import (START, ROUND_H, DEADLINE_H, N_ROUNDS, RESULTS_DIR,
                              SiteClient, to_list, from_list)
-from src.network_replay import NetworkReplay, lora_airtime, DUTY_CYCLE
+from src.network_replay import NetworkReplay, lora_airtime, lora_fragments, DUTY_CYCLE
+from src import scenarios as scen
 from src.scheduler import Scheduler
 
 STALE_FLOOR = 0.25      # staleness factor never drops below this
@@ -26,10 +27,16 @@ def staleness_factor(tau):
 
 def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
            scheduler=False, async_late=False, staleness=False, fairness=False,
-           tag=None, verbose=True):
+           scenario="trace", tag=None, verbose=True, save=True):
     site_data, (Xv, yv), _ = pv_data.get_data()
     clients = {s: SiteClient(s, *site_data[s], activation, seed) for s in pv_data.SITES}
+    sp = scen.SCENARIOS[scenario]
+    deadline_h = sp["deadline_h"] if sp else DEADLINE_H
     nr = NetworkReplay()
+    if sp:
+        nr.out = pd.concat([nr.out, scen.extra_outages(sp, seed, pv_data.SITES, START, ROUND_H * (N_ROUNDS + 1))],
+                           ignore_index=True)
+    base_transfer = dl.load_transmissions().groupby("protocol").transfer_duration_s.median()
     trace = dl.load_transmissions().set_index(["round_id", "site_id"])
     sched = Scheduler(pv_data.SITES, link_stats(nr.lm)) if scheduler else None
     w = mlp.init_params(np.random.default_rng(seed), activation)
@@ -60,14 +67,17 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
     log(0, START.isoformat(), [], 0, 0, 0, 0, 0, 0, 0, 0.0)
     for r in range(1, N_ROUNDS + 1):
         opened = START + pd.Timedelta(hours=ROUND_H * r)
-        deadline = opened + pd.Timedelta(hours=DEADLINE_H)
+        deadline = opened + pd.Timedelta(hours=deadline_h)
         w_vec = mlp.flatten(w)
 
         feats, rel = {}, {}
         if sched:
             for s in pv_data.SITES:
                 t = trace.loc[(r, s)]
-                feats[s] = sched.features(t.protocol, nr.link_at(s, opened))
+                link = nr.link_at(s, opened)
+                if sp:
+                    link = scen.harsh_link(link, sp, nr.offline_until(s, opened) is not None)
+                feats[s] = sched.features(t.protocol, link)
             selected, rel = sched.select(feats)
         else:
             selected = list(pv_data.SITES)
@@ -80,19 +90,31 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
             if error_feedback:
                 x = x + residual[site]
             t = trace.loc[(r, site)]
-            sf = int(t.lora_sf) if t.protocol == "LORA" else None
+            if sp is None:                                   # shared trace
+                scheduled = t.scheduled_send_utc
+                sf = int(t.lora_sf) if t.protocol == "LORA" else None
+            else:                                            # generated events
+                ctx = scen.draw_context(seed, r, pv_data.SITES.index(site), t.protocol,
+                                        opened, deadline_h, nr, site, sp)
+                scheduled, sf = ctx["scheduled"], ctx["sf"]
             sent, payload, _m = encode(x, t.protocol, sf)
             if error_feedback:
                 residual[site] = x - sent
-            o = nr.replay(site, t.protocol, t.scheduled_send_utc, deadline, payload, sf, int(t.retries))
-            transfer = o["transfer_duration_s"] if o["transfer_duration_s"] is not None else float(t.transfer_duration_s)
+            if sp is None:
+                retries, will_fail = int(t.retries), t.status == "FAILED"
+            else:
+                frags = lora_fragments(payload, sf) if t.protocol == "LORA" else 1
+                retries, will_fail = scen.draw_retries(ctx["rng"], ctx["p"], frags, t.protocol)
+            o = nr.replay(site, t.protocol, scheduled, deadline, payload, sf, retries)
+            fallback = float(t.transfer_duration_s) if sp is None else float(base_transfer[t.protocol])
+            transfer = o["transfer_duration_s"] if o["transfer_duration_s"] is not None else fallback
             if t.protocol == "LORA":
                 lora_s += transfer
             arrival = o["tx_start_utc"] + pd.Timedelta(seconds=transfer)
             b_att += payload
             rate = (ok[site] + 1) / (tries[site] + 2)       # delivery rate known BEFORE this upload
             tries[site] += 1
-            if t.status == "FAILED":
+            if will_fail:
                 failed += 1; outcome[site] = False
             elif arrival > deadline:
                 late += 1; outcome[site] = False
@@ -111,7 +133,7 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
         if async_late:
             for p in [p for p in pending if p["arrival"] <= close]:
                 got.append(dict(site=p["site"], n=p["n"], delta=p["delta"], tau=r - p["base"], rate=p["rate"]))
-                late_used += 1
+                b_rec += 0; late_used += 1
                 pending.remove(p)
 
         if got:
@@ -140,7 +162,9 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
 
     df = pd.DataFrame(rows)
     tag = tag or (f"{compression}{'_ef' if error_feedback else ''}{'_sched' if scheduler else ''}"
-                  f"{'_async' if async_late else ''}{'_stale' if staleness else ''}{'_fair' if fairness else ''}")
+                  f"{'_async' if async_late else ''}{'_stale' if staleness else ''}{'_fair' if fairness else ''}{'' if scenario == 'trace' else '_' + scenario}")
+    if not save:
+        return df
     RESULTS_DIR.mkdir(exist_ok=True)
     out = RESULTS_DIR / f"engine_{tag}_{activation}_seed{seed}.csv"
     df.to_csv(out, index=False)
@@ -166,6 +190,7 @@ if __name__ == "__main__":
     ap.add_argument("--async-late", action="store_true")
     ap.add_argument("--staleness", action="store_true")
     ap.add_argument("--fairness", action="store_true")
+    ap.add_argument("--scenario", default="trace", choices=list(scen.SCENARIOS))
     a = ap.parse_args()
     run_fl(a.seed, a.activation, a.compression, a.error_feedback, a.scheduler,
-           a.async_late, a.staleness, a.fairness)
+           a.async_late, a.staleness, a.fairness, a.scenario)

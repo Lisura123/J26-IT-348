@@ -15,6 +15,8 @@ class Scheduler:
         self.w = np.array([1.5, -4.0, 0.4, 0.3, 1.5])
 
     def features(self, protocol, link):
+        if not bool(link["online"]):                 # offline at round opening: no link measurements exist
+            return None
         rm, rs, sm, ss = self.stats[protocol]
         z_rssi = (float(link["rssi_dbm"]) - rm) / rs
         snr = link["snr_db"]
@@ -23,6 +25,8 @@ class Scheduler:
                          1.0 if bool(link["online"]) else 0.0])
 
     def link_prob(self, x):
+        if x is None:                                # offline: cannot deliver now
+            return 0.0
         return 1.0 / (1.0 + np.exp(-float(self.w @ x)))
 
     def reliability(self, site, x):
@@ -46,7 +50,8 @@ class Scheduler:
     def observe(self, site, x, on_time):
         y = 1.0 if on_time else 0.0
         self.hist[site] = (1 - self.alpha) * self.hist[site] + self.alpha * y
-        self.w = self.w + self.lr * (y - self.link_prob(x)) * x       # online logistic SGD step
+        if x is not None:                                             # nothing to learn from an offline snapshot
+            self.w = self.w + self.lr * (y - self.link_prob(x)) * x   # online logistic SGD step
 
     def jain(self):
         p = np.array([self.part[s] for s in self.sites], float)
