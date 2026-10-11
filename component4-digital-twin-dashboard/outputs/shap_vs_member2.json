@@ -1,0 +1,7 @@
+{
+ "rows": 3000,
+ "max_additivity_error": 0.0,
+ "top1_feature_agreement": 0.662,
+ "median_row_correlation": 0.8921,
+ "sign_agreement": 0.8533
+}
