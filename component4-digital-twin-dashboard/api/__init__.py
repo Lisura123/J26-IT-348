@@ -1,0 +1,1 @@
+"""Component 4 API - serves twin outputs, alerts and explanations to the Angular dashboard."""
