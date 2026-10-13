@@ -1,0 +1,19 @@
+/* Global styles - green palette shared with the group slides */
+:root {
+  --green-700: #2e7d32;
+  --green-50: #e8f5e9;
+  --red-600: #c62828;
+  --amber-600: #f9a825;
+  --grey-600: #616161;
+  --bg: #f5f7f5;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1b1b1b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+.card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.muted { color: var(--grey-600); margin: 0; }
+input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; }
+button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--green-700); color: #fff;
+         font-size: 1rem; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
