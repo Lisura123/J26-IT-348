@@ -1,0 +1,332 @@
+"""Replay tool for project-backend.
+Replays CSV data over HTTP or MQTT with speed control, dry-run mode,
+batching, and startup safety guards.
+
+Usage:
+    python -m backend.tools.replay --stream readings --file ../pv_fault_dataset.csv --window OPERATION --dry-run
+    python -m backend.tools.replay --stream readings --file ../pv_fault_dataset.csv --window OPERATION --site SITE-C --transport mqtt --speed 0
+    python -m backend.tools.replay --stream readings --file ../pv_fault_dataset.csv --window OPERATION --transport http
+"""
+import argparse
+import csv
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from typing import Any, Dict, List, Optional
+
+from dotenv import load_dotenv
+import httpx
+import paho.mqtt.client as mqtt
+
+from backend.config import get_final_measurement, load_schema, verify_startup_safety
+from backend.validate import parse_utc_timestamp
+
+load_dotenv()
+
+DATASET_METADATA_COLS = {"window", "run_id", "label"}
+READINGS_NUMERIC_FLOATS = {
+    "voltage_v", "current_ma", "power_mw", "panel_temp1_c",
+    "panel_temp2_c", "ambient_temp_c", "humidity_pct",
+    "pressure_hpa", "irradiance_lux", "dust_vo_v"
+}
+
+
+def is_pv_fault_dataset(header: List[str]) -> bool:
+    """Checks whether the CSV header is that of pv_fault_dataset.csv."""
+    return DATASET_METADATA_COLS.issubset(set(header))
+
+
+def load_and_filter_records(
+    file_path: Path,
+    stream: str,
+    window: Optional[str] = None,
+    sites: Optional[List[str]] = None,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Loads CSV, applies stream rules, window/site/limit filters, and type normalization."""
+    if not file_path.exists():
+        print(f"Error: File not found: {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(file_path, mode="r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        header = reader.fieldnames or []
+
+        # Check refusal rule for prediction and twin streams
+        if is_pv_fault_dataset(header):
+            if stream in ("prediction", "twin"):
+                print(
+                    f"Refusal Error: '{file_path.name}' contains ground-truth labels, which are NOT model predictions. "
+                    f"Streams '{stream}' accept only CSVs whose columns match their schema.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        records: List[Dict[str, Any]] = []
+        is_dataset = is_pv_fault_dataset(header)
+        site_filter_set = set(sites) if sites else None
+
+        for row in reader:
+            # Window filter
+            if window and row.get("window"):
+                if row.get("window") != window:
+                    continue
+
+            # Site filter
+            sid = row.get("site_id")
+            if site_filter_set and sid not in site_filter_set:
+                continue
+
+            # Stream specific transformations
+            if is_dataset and stream == "readings":
+                # Strict-mode drop of dataset metadata columns
+                drop_cols = {"window", "run_id", "label", "health_score"}
+                clean_rec = {k: v for k, v in row.items() if k not in drop_cols and v != ""}
+                # Cast known numeric types
+                for fld in READINGS_NUMERIC_FLOATS:
+                    if fld in clean_rec:
+                        try:
+                            clean_rec[fld] = float(clean_rec[fld])
+                        except ValueError:
+                            pass
+                if "reading" in clean_rec:
+                    try:
+                        clean_rec["reading"] = int(clean_rec["reading"])
+                    except ValueError:
+                        pass
+                rec = clean_rec
+
+            elif is_dataset and stream == "health":
+                # Demo fixture: record_id, timestamp_utc, site_id, device_id, health_score
+                health_score = None
+                if row.get("health_score") not in (None, ""):
+                    try:
+                        health_score = float(row["health_score"])
+                    except ValueError:
+                        pass
+
+                rec = {
+                    "record_id": row.get("record_id"),
+                    "timestamp_utc": row.get("timestamp_utc"),
+                    "site_id": row.get("site_id"),
+                    "device_id": row.get("device_id"),
+                }
+                if health_score is not None:
+                    rec["health_score"] = health_score
+                if "protocol" in row and row["protocol"]:
+                    rec["protocol"] = row["protocol"]
+
+            else:
+                # Normal CSV matching schema
+                rec = {k: v for k, v in row.items() if v != ""}
+
+            records.append(rec)
+            if limit and len(records) >= limit:
+                break
+
+    return records
+
+
+def run_http_replay(
+    records: List[Dict[str, Any]],
+    stream: str,
+    api_url: str,
+    api_key: str,
+    batch_size: int,
+    speed: float,
+) -> None:
+    """Sends records via HTTP ingest API with batching and speed control."""
+    url = f"{api_url}/api/v1/ingest/{stream}"
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+
+    total = len(records)
+    print(f"\n[HTTP] Starting replay of {total} records to {url} (batch_size={batch_size}, speed={speed})...")
+
+    prev_dt: Optional[datetime] = None
+    sent = 0
+
+    with httpx.Client(timeout=30.0) as client:
+        if speed == 0:
+            # Send in batches of batch_size as fast as possible
+            for i in range(0, total, batch_size):
+                batch = records[i : i + batch_size]
+                resp = client.post(url, headers=headers, json=batch)
+                if resp.status_code != 200:
+                    print(f"HTTP Error {resp.status_code}: {resp.text}", file=sys.stderr)
+                    sys.exit(1)
+                sent += len(batch)
+                if sent % 500 < batch_size or sent == total:
+                    print(f"  Progress: {sent}/{total} rows sent...")
+        else:
+            # Send row by row with speed delay
+            for idx, rec in enumerate(records):
+                curr_dt, _, _ = parse_utc_timestamp(rec.get("timestamp_utc"))
+                if prev_dt and curr_dt and speed > 0:
+                    gap_seconds = (curr_dt - prev_dt).total_seconds()
+                    if gap_seconds > 0:
+                        delay = min(gap_seconds / speed, 2.0)
+                        time.sleep(delay)
+                prev_dt = curr_dt
+
+                resp = client.post(url, headers=headers, json=rec)
+                if resp.status_code != 200:
+                    print(f"HTTP Error {resp.status_code}: {resp.text}", file=sys.stderr)
+                    sys.exit(1)
+                sent += 1
+                if sent % 500 == 0 or sent == total:
+                    print(f"  Progress: {sent}/{total} rows sent...")
+
+
+def run_mqtt_replay(
+    records: List[Dict[str, Any]],
+    stream: str,
+    mqtt_host: str,
+    mqtt_port: int,
+    batch_size: int,
+    speed: float,
+) -> None:
+    """Publishes records via MQTT with QoS 1 and speed control."""
+    client_id = f"replay-{stream}-{os.getpid()}"
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    print(f"\n[MQTT] Connecting to broker at {mqtt_host}:{mqtt_port}...")
+    client.connect(mqtt_host, mqtt_port, keepalive=60)
+    client.loop_start()
+
+    total = len(records)
+    print(f"[MQTT] Starting replay of {total} records (speed={speed})...")
+    prev_dt: Optional[datetime] = None
+    sent = 0
+
+    if speed == 0:
+        # Group into batches of batch_size by site_id, or send row-by-row
+        # Batching up to batch_size per site sends array payloads
+        i = 0
+        while i < total:
+            current_site = records[i].get("site_id")
+            # Collect consecutive rows of the same site up to batch_size
+            batch = []
+            while i < total and len(batch) < batch_size and records[i].get("site_id") == current_site:
+                batch.append(records[i])
+                i += 1
+
+            topic = f"solar/{current_site}/{stream}"
+            payload = json.dumps(batch)
+            info = client.publish(topic, payload, qos=1)
+            info.wait_for_publish()
+            sent += len(batch)
+            if sent % 500 < batch_size or sent == total:
+                print(f"  Progress: {sent}/{total} rows sent...")
+    else:
+        # Send row by row with delay
+        for rec in records:
+            curr_dt, _, _ = parse_utc_timestamp(rec.get("timestamp_utc"))
+            if prev_dt and curr_dt and speed > 0:
+                gap_seconds = (curr_dt - prev_dt).total_seconds()
+                if gap_seconds > 0:
+                    delay = min(gap_seconds / speed, 2.0)
+                    time.sleep(delay)
+            prev_dt = curr_dt
+
+            sid = rec.get("site_id")
+            topic = f"solar/{sid}/{stream}"
+            payload = json.dumps(rec)
+            info = client.publish(topic, payload, qos=1)
+            info.wait_for_publish()
+            sent += 1
+            if sent % 500 == 0 or sent == total:
+                print(f"  Progress: {sent}/{total} rows sent...")
+
+    print("[MQTT] All messages published. Waiting 3 seconds for service buffer flush...")
+    time.sleep(3.0)
+
+    client.loop_stop()
+    client.disconnect()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Replay tool for project-backend")
+    parser.add_argument("--stream", required=True, choices=["readings", "health", "prediction", "twin"])
+    parser.add_argument("--file", required=True, type=Path)
+    parser.add_argument("--window", choices=["TRAINING", "OPERATION"], default=None)
+    parser.add_argument("--site", action="append", default=[], help="Target site (repeatable)")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--transport", choices=["mqtt", "http"], default="http")
+    parser.add_argument("--batch-size", type=int, default=200)
+    parser.add_argument("--speed", type=float, default=0.0)
+    parser.add_argument("--dry-run", action="store_true")
+
+    # Network args
+    parser.add_argument("--api-url", default=os.environ.get("API_URL", "http://localhost:8000"))
+    parser.add_argument("--api-key", default=os.environ.get("API_KEY", ""))
+    parser.add_argument("--mqtt-host", default=os.environ.get("MQTT_HOST", "localhost"))
+    parser.add_argument("--mqtt-port", type=int, default=int(os.environ.get("MQTT_PORT", 1883)))
+
+    args = parser.parse_args()
+
+    # Safety guard applies to every tool that writes (unless dry-run)
+    if not args.dry_run:
+        verify_startup_safety()
+
+    load_schema()
+    target_measurement = get_final_measurement(args.stream)
+
+    records = load_and_filter_records(
+        file_path=args.file,
+        stream=args.stream,
+        window=args.window,
+        sites=args.site,
+        limit=args.limit,
+    )
+
+    sites_found = sorted(set(r.get("site_id", "") for r in records if r.get("site_id")))
+    times_found = [r.get("timestamp_utc", "") for r in records if r.get("timestamp_utc")]
+    time_min = min(times_found) if times_found else "N/A"
+    time_max = max(times_found) if times_found else "N/A"
+
+    print("=== Replay Tool ===")
+    print(f"Stream:             {args.stream}")
+    print(f"Target Measurement: {target_measurement}")
+    print(f"Rows selected:      {len(records)}")
+    print(f"Sites selected:     {sites_found}")
+    print(f"Time range:         {time_min} .. {time_max}")
+
+    if args.dry_run:
+        print("\n--- DRY-RUN MODE: No data sent ---")
+        print("Sample payloads (up to 3):")
+        for sample in records[:3]:
+            print(json.dumps(sample, indent=2))
+        print(f"\nDry-run completed: {len(records)} rows verified.")
+        sys.exit(0)
+
+    start_time = time.time()
+    if args.transport == "http":
+        if not args.api_key:
+            print("Error: Ingest API_KEY must be provided or configured in environment", file=sys.stderr)
+            sys.exit(1)
+        run_http_replay(
+            records=records,
+            stream=args.stream,
+            api_url=args.api_url,
+            api_key=args.api_key,
+            batch_size=args.batch_size,
+            speed=args.speed,
+        )
+    elif args.transport == "mqtt":
+        run_mqtt_replay(
+            records=records,
+            stream=args.stream,
+            mqtt_host=args.mqtt_host,
+            mqtt_port=args.mqtt_port,
+            batch_size=args.batch_size,
+            speed=args.speed,
+        )
+
+    elapsed = time.time() - start_time
+    print(f"\nReplay summary: {len(records)} rows replayed via {args.transport.upper()} in {elapsed:.2f}s.")
+
+
+if __name__ == "__main__":
+    main()

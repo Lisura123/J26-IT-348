@@ -1,0 +1,117 @@
+# Data contract & stream specifications for project-backend
+# Measurement names are changeable ONLY in this file.
+
+settings:
+  measurement_prefix: ""
+
+# Member 3's measurements are OFF LIMITS. The validator refuses any stream
+# whose final measurement name (after prefix) matches any of these.
+reserved_measurements:
+  - network_link_metrics
+  - network_outages
+  - fl_client_updates
+  - fl_global_models
+  - fl_site_state
+  - ota_deployments
+
+streams:
+  readings:
+    measurement: sensor_readings
+    status: verified
+    mode: strict
+    tags:
+      - site_id
+      - device_id
+      - protocol
+    required:
+      - timestamp_utc
+      - site_id
+      - record_id
+    float_fields:
+      - voltage_v
+      - current_ma
+      - power_mw
+      - panel_temp1_c
+      - panel_temp2_c
+      - ambient_temp_c
+      - humidity_pct
+      - pressure_hpa
+      - irradiance_lux
+      - dust_vo_v
+    int_fields:
+      - reading
+    string_fields:
+      - record_id
+      - panel_id
+    drop_columns:
+      - window
+      - run_id
+      - label
+      - health_score
+    warnings:
+      humidity_pct:
+        min: 0.0
+        max: 100.0
+
+  # OPEN STREAMS (status: provisional, mode: open)
+  # Proposed names are suggestions to confirm with the respective member.
+  health:
+    measurement: sensor_health
+    status: provisional
+    mode: open
+    tags:
+      - site_id
+      - device_id
+      - protocol
+    required:
+      - timestamp_utc
+      - site_id
+      - record_id
+    float_fields:
+      - health_score
+    string_fields:
+      - record_id
+    # quality flags: unknown, ask Member 1
+
+  prediction:
+    measurement: fault_predictions
+    status: provisional
+    mode: open
+    tags:
+      - site_id
+      - device_id
+      - protocol
+    required:
+      - timestamp_utc
+      - site_id
+      - record_id
+    string_fields:
+      - record_id
+      - predicted_label
+    allowed_values:
+      predicted_label:
+        - NORMAL
+        - PARTIAL_SHADING
+        - DUST
+        - OPEN_CIRCUIT
+        - SHORT_CIRCUIT
+    float_fields_proposed:
+      - confidence
+      - prob_normal
+      - prob_partial_shading
+      - prob_dust
+      - prob_open_circuit
+      - prob_short_circuit
+
+  twin:
+    measurement: twin_output
+    status: provisional
+    mode: open
+    tags:
+      - site_id
+      - device_id
+      - protocol
+    required:
+      - timestamp_utc
+      - site_id
+    # fields: unknown, ask Member 4
