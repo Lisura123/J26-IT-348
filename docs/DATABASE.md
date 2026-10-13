@@ -6,7 +6,7 @@ One database for all four components. Owner of the setup: Member 3.
 
 | Setting | Value |
 |---|---|
-| URL | `http://localhost:8086` (or `http://<host-ip>:8086` if one computer hosts it) |
+| URL | `http://localhost:8087` (or `http://<host-ip>:8087` if one computer hosts it) |
 | Organisation | `j26` |
 | Bucket | `solar_pv` |
 | Token | ask Member 3 privately. Never commit it. Keep it in your own `.env` |
@@ -89,5 +89,5 @@ Member 3 creates one per reader: InfluxDB UI, Load Data, API Tokens, Generate Cu
 
 ## Sharing across computers
 Simplest: everyone runs the database locally and loads the shared files with the loader scripts.
-For an integration demo, one computer can host it: others use `http://<host-ip>:8086`, and the host must allow
-port 8086 in the Windows firewall.
+For an integration demo, one computer can host it: others use `http://<host-ip>:8087`, and the host must allow
+port 8087 in the Windows firewall.
