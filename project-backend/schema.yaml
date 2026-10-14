@@ -68,10 +68,10 @@ streams:
       - site_id
       - record_id
     float_fields:
-      - health_score
+      - health_score        # DEMO fixture from dataset; Member 1 (Sensing) must confirm final field name & scale
     string_fields:
       - record_id
-    # quality flags: unknown, ask Member 1
+    # quality flags: unknown, Member 1 (Sensing) must confirm (e.g. booleans or string enum)
 
   prediction:
     measurement: fault_predictions
@@ -87,21 +87,21 @@ streams:
       - record_id
     string_fields:
       - record_id
-      - predicted_label
+      - predicted_label     # PROPOSED: Member 2 (TinyML) must confirm class names
     allowed_values:
-      predicted_label:
+      predicted_label:      # PROPOSED: Member 2 (TinyML) must confirm class list
         - NORMAL
         - PARTIAL_SHADING
         - DUST
         - OPEN_CIRCUIT
         - SHORT_CIRCUIT
     float_fields_proposed:
-      - confidence
-      - prob_normal
-      - prob_partial_shading
-      - prob_dust
-      - prob_open_circuit
-      - prob_short_circuit
+      - confidence          # PROPOSED: Member 2 (TinyML) must confirm if model outputs confidence score
+      - prob_normal         # PROPOSED: Member 2 (TinyML) must confirm if probabilities are emitted
+      - prob_partial_shading # PROPOSED: Member 2 (TinyML) must confirm
+      - prob_dust           # PROPOSED: Member 2 (TinyML) must confirm
+      - prob_open_circuit   # PROPOSED: Member 2 (TinyML) must confirm
+      - prob_short_circuit  # PROPOSED: Member 2 (TinyML) must confirm
 
   twin:
     measurement: twin_output
@@ -114,4 +114,5 @@ streams:
     required:
       - timestamp_utc
       - site_id
-    # fields: unknown, ask Member 4
+    # fields: unknown; Member 4 (Digital Twin Dashboard) must confirm all simulation/twin output field names and types
+

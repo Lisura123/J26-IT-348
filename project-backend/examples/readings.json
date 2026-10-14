@@ -1,0 +1,18 @@
+{
+  "record_id": "REC-03001",
+  "timestamp_utc": "2026-09-10T01:49:00Z",
+  "site_id": "SITE-B",
+  "device_id": "ESP32-B01",
+  "panel_id": "PV-B01",
+  "reading": 1,
+  "voltage_v": 2.721,
+  "current_ma": 12.87,
+  "power_mw": 35.03,
+  "panel_temp1_c": 27.62,
+  "panel_temp2_c": 27.21,
+  "ambient_temp_c": 23.5,
+  "humidity_pct": 90.71,
+  "pressure_hpa": 1009.89,
+  "irradiance_lux": 14350.0,
+  "dust_vo_v": 1.226
+}
