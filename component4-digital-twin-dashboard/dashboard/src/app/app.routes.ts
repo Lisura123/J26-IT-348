@@ -13,9 +13,14 @@ export const routes: Routes = [
     canActivateChild: [authGuard],
     children: [
       { path: '', component: Sites },
-      // lazy-loaded: Chart.js is only downloaded when a panel page is opened
+      // lazy-loaded pages: Chart.js is only downloaded when one of them is opened
       { path: 'sites/:id', loadComponent: () => import('./pages/site-detail/site-detail').then((m) => m.SiteDetail) },
-      // Step 16: alerts (view_explanations), reports (view_reports)
+      { path: 'alerts', data: { permission: 'view_explanations' },
+        loadComponent: () => import('./pages/alerts/alerts').then((m) => m.Alerts) },
+      { path: 'alerts/:id', data: { permission: 'view_explanations' },
+        loadComponent: () => import('./pages/alert-detail/alert-detail').then((m) => m.AlertDetailPage) },
+      { path: 'reports', data: { permission: 'view_reports' },
+        loadComponent: () => import('./pages/reports/reports').then((m) => m.Reports) },
     ],
   },
   { path: '**', redirectTo: '' },
