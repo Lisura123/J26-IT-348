@@ -3,6 +3,7 @@ All routes require X-API-Key matching READ_API_KEY.
 Strict input validation enforces data contracts and prevents Flux injection.
 """
 from datetime import datetime, timedelta, timezone
+import logging
 import os
 import re
 import secrets
@@ -12,11 +13,13 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from backend.config import get_stream_config
-from backend.influx_reader import InfluxReader
+from backend.influx_reader import InfluxReader, ReadError
 from backend.sites import get_all_sites, valid_site_ids
 from backend.validate import parse_utc_timestamp
 
 load_dotenv()
+
+logger = logging.getLogger("backend.api.query")
 
 router = APIRouter(prefix="/api/v1", tags=["query"])
 
@@ -118,7 +121,14 @@ def query_latest(
         )
 
     reader = get_active_reader(request)
-    result = reader.get_latest(stream=stream, site_id=site_id)
+    try:
+        result = reader.get_latest(stream=stream, site_id=site_id)
+    except ReadError as exc:
+        logger.error("InfluxDB read error in query_latest: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="InfluxDB unreachable",
+        )
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -234,16 +244,23 @@ def query_series(
 
     # Execute query
     reader = get_active_reader(request)
-    points = reader.get_series(
-        stream=stream,
-        site_id=site_id,
-        field=field,
-        start=dt_start,
-        stop=dt_stop,
-        every=every,
-        fn=fn,
-        limit=limit,
-    )
+    try:
+        points = reader.get_series(
+            stream=stream,
+            site_id=site_id,
+            field=field,
+            start=dt_start,
+            stop=dt_stop,
+            every=every,
+            fn=fn,
+            limit=limit,
+        )
+    except ReadError as exc:
+        logger.error("InfluxDB read error in query_series: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="InfluxDB unreachable",
+        )
 
     return {
         "stream": stream,

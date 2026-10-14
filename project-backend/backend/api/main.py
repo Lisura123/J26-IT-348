@@ -53,6 +53,22 @@ app.add_middleware(
 # Mount read/query routes
 app.include_router(query_router)
 
+# Register ReadError exception handler returning 503
+from backend.influx_reader import ReadError
+import logging
+
+logger = logging.getLogger("backend.api")
+
+
+@app.exception_handler(ReadError)
+async def handle_read_error(request: Request, exc: ReadError):
+    logger.error("Read API encountered %s", type(exc).__name__)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "InfluxDB unreachable"},
+    )
+
+
 # Allow injecting a custom/fake writer and reader for unit tests
 app.state.writer = None
 app.state.reader = None

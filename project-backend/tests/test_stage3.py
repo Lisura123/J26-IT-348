@@ -10,8 +10,13 @@ from starlette.testclient import TestClient
 
 from backend.api.main import app
 from backend.config import verify_startup_safety
-from backend.influx_reader import FakeReader
-from backend.tools.replay import is_pv_fault_dataset, load_and_filter_records
+from backend.influx_reader import FakeReader, ReadError
+from backend.tools.replay import (
+    is_pv_fault_dataset,
+    load_and_filter_records,
+    run_http_replay,
+    run_mqtt_replay,
+)
 from backend.tools.verify_backend import verify_dataset
 
 DATASET_CSV_PATH = Path(__file__).resolve().parent.parent.parent / "pv_fault_dataset.csv"
@@ -621,4 +626,150 @@ def test_smoke_test_run_marker_and_expected_voltages():
     for (sid, t) in exp1:
         assert exp1[(sid, t)] != exp2[(sid, t)]
         assert abs(exp2[(sid, t)] - exp1[(sid, t)] - 0.1) < 1e-4
+
+
+# ============================================================================
+# 10. READ ERROR & RESILIENCE TESTS
+# ============================================================================
+
+def test_read_api_query_latest_503_on_read_error(test_client, fake_reader):
+    """GET /api/v1/query/latest returns 503 with InfluxDB unreachable when ReadError is raised."""
+    fake_reader.should_raise = True
+    resp = test_client.get(
+        "/api/v1/query/latest?stream=readings&site_id=SITE-A",
+        headers={"X-API-Key": TEST_READ_KEY},
+    )
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "InfluxDB unreachable"}
+
+
+def test_read_api_query_series_503_on_read_error(test_client, fake_reader):
+    """GET /api/v1/query/series returns 503 with InfluxDB unreachable when ReadError is raised."""
+    fake_reader.should_raise = True
+    url = (
+        "/api/v1/query/series?stream=readings&site_id=SITE-A&field=voltage_v"
+        "&start=2026-09-10T09:00:00Z&stop=2026-09-10T11:00:00Z"
+    )
+    resp = test_client.get(url, headers={"X-API-Key": TEST_READ_KEY})
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "InfluxDB unreachable"}
+
+
+def test_verify_backend_read_error_exits_2_no_counts(tmp_path, capsys):
+    """verify_dataset returns code 2 on ReadError and never prints counts or MISMATCH."""
+    csv_file = tmp_path / "test_data.csv"
+    csv_file.write_text(
+        "record_id,timestamp_utc,site_id,device_id,reading,voltage_v\n"
+        "REC-TEST-1,2026-09-10T10:00:00Z,SITE-A,ESP32-A01,1,18.5\n"
+    )
+    failing_reader = FakeReader(should_raise=True)
+    ret = verify_dataset(
+        stream="readings",
+        file_path=csv_file,
+        reader=failing_reader,
+    )
+    assert ret == 2
+    captured = capsys.readouterr()
+    assert "CANNOT READ INFLUXDB:" in captured.out
+    assert "Expected rows:" not in captured.out
+    assert "Found rows:" not in captured.out
+    assert "MISMATCH" not in captured.out
+    assert "field values" not in captured.out
+
+
+def test_smoke_test_read_error_exits_2(capsys, monkeypatch):
+    """smoke_test prints CANNOT READ INFLUXDB and exits code 2 when ping/read fails."""
+    from backend.tools.smoke_test import main as smoke_main
+
+    failing_reader = FakeReader(should_raise=True)
+    monkeypatch.setattr("backend.tools.smoke_test.InfluxReader.from_env", lambda: failing_reader)
+    test_args = ["smoke_test.py", "--transport", "http", "--file", "dummy.csv"]
+    monkeypatch.setattr("sys.argv", test_args)
+
+    with pytest.raises(SystemExit) as exc_info:
+        smoke_main()
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "CANNOT READ INFLUXDB:" in captured.out
+    assert "field values" not in captured.out
+
+
+def test_replay_http_totals_and_exit_nonzero_on_write_failed(monkeypatch, capsys):
+    """run_http_replay prints totals and exits non-zero if write_failed > 0."""
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "accepted": 1,
+                "rejected": 0,
+                "written": 0,
+                "write_failed": 1,
+                "reasons": {"INFLUX_ERROR": 1},
+            }
+
+    monkeypatch.setattr(
+        "backend.tools.replay._send_http_request_with_retries",
+        lambda client, url, headers, payload: FakeResponse(),
+    )
+
+    records = [
+        {"record_id": "R1", "timestamp_utc": "2026-09-10T10:00:00Z", "site_id": "SITE-A"}
+    ]
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_http_replay(
+            records=records,
+            stream="readings",
+            api_url="http://localhost:8000",
+            api_key="test-key",
+            batch_size=10,
+            speed=0,
+        )
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "=== HTTP Replay Totals ===" in captured.out
+    assert "Accepted:     1" in captured.out
+    assert "Write Failed: 1" in captured.out
+    assert "Reasons:      {'INFLUX_ERROR': 1}" in captured.out
+
+
+def test_replay_mqtt_reminder_printed(monkeypatch, capsys):
+    """run_mqtt_replay prints published count and reminder to run verify_backend."""
+    class FakeMQTTClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def connect(self, *args, **kwargs):
+            pass
+        def loop_start(self):
+            pass
+        def loop_stop(self):
+            pass
+        def disconnect(self):
+            pass
+        def publish(self, *args, **kwargs):
+            class Info:
+                def wait_for_publish(self):
+                    pass
+            return Info()
+
+    monkeypatch.setattr("paho.mqtt.client.Client", FakeMQTTClient)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    records = [
+        {"record_id": "R1", "timestamp_utc": "2026-09-10T10:00:00Z", "site_id": "SITE-A"}
+    ]
+    run_mqtt_replay(
+        records=records,
+        stream="readings",
+        mqtt_host="localhost",
+        mqtt_port=1883,
+        batch_size=10,
+        speed=0,
+        file_path=Path("dummy_path.csv"),
+    )
+    captured = capsys.readouterr()
+    assert "1 rows published" in captured.out
+    assert "Reminder: Run verify_backend" in captured.out
+    assert "--stream readings --file dummy_path.csv" in captured.out
+
 

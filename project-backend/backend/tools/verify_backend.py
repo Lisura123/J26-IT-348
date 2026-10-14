@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Set
 from dotenv import load_dotenv
 
 from backend.config import get_final_measurement, get_reserved_measurements, load_schema
-from backend.influx_reader import InfluxReader
+from backend.influx_reader import InfluxReader, ReadError
 from backend.tools.replay import load_and_filter_records
 from backend.validate import parse_utc_timestamp, validate_record
 
@@ -33,7 +33,7 @@ def verify_dataset(
     reader: Optional[Any] = None,
 ) -> int:
     """Performs verification of expected vs found rows.
-    Returns 0 on OK, 1 on MISMATCH.
+    Returns 0 on OK, 1 on MISMATCH, 2 on InfluxDB ReadError.
     """
     load_schema()
     target_measurement = get_final_measurement(stream)
@@ -76,12 +76,30 @@ def verify_dataset(
     # 3. Found = distinct (site_id, _time) rows in InfluxDB
     active_reader = reader or InfluxReader.from_env()
 
-    found = active_reader.count_distinct_rows(
-        stream=stream,
-        sites=filter_sites,
-        start=dt_start,
-        stop=dt_stop,
-    )
+    try:
+        found = active_reader.count_distinct_rows(
+            stream=stream,
+            sites=filter_sites,
+            start=dt_start,
+            stop=dt_stop,
+        )
+
+        stored_ids: Set[str] = set()
+        if expected != found:
+            stored_ids = active_reader.get_stored_record_ids(
+                stream=stream,
+                sites=filter_sites,
+                start=dt_start,
+                stop=dt_stop,
+            )
+
+        reserved_counts: Dict[str, int] = {}
+        for m in reserved_measurements:
+            reserved_counts[m] = active_reader.count_field_values(m)
+
+    except ReadError as e:
+        print(f"CANNOT READ INFLUXDB: {e}")
+        return 2
 
     print("=== Backend Verification ===")
     print(f"Stream:             {stream}")
@@ -99,12 +117,6 @@ def verify_dataset(
     # On MISMATCH, list up to 10 missing record_ids
     if not is_ok:
         print("\nMISMATCH Details:")
-        stored_ids = active_reader.get_stored_record_ids(
-            stream=stream,
-            sites=filter_sites,
-            start=dt_start,
-            stop=dt_stop,
-        )
         missing_ids = []
         for r in accepted_records:
             rid = r.get("record_id")
@@ -121,7 +133,7 @@ def verify_dataset(
     # 4. Print field-value counts of the six reserved Member 3 measurements
     print("\nReserved Member 3 Measurements (field-value counts):")
     for m in reserved_measurements:
-        cnt = active_reader.count_field_values(m)
+        cnt = reserved_counts.get(m, 0)
         print(f"  [Reserved] {m:22s} : {cnt:6d} field values")
 
     print("\nNote: InfluxDB points sharing the same series (measurement + tags) and timestamp overwrite each other.")

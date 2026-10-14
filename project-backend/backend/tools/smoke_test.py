@@ -29,7 +29,7 @@ import httpx
 import paho.mqtt.client as mqtt
 
 from backend.config import get_final_measurement, get_reserved_measurements, load_schema
-from backend.influx_reader import InfluxReader
+from backend.influx_reader import InfluxReader, ReadError
 from backend.influx_writer import InfluxWriter
 from backend.ingest.rejects import get_rejects_file
 
@@ -198,7 +198,7 @@ def verify_influx_voltages(
       |> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "voltage_v")
       |> filter(fn: (r) => r.site_id == "SITE-A" or r.site_id == "SITE-C")
     '''
-    tables = reader.query_api.query(flux, org=reader.org)
+    tables = reader.query(flux)
     found_map: Dict[Tuple[str, str], float] = {}
 
     for t in tables:
@@ -265,16 +265,22 @@ def main():
 
     # 1. Connect to InfluxDB and record counts BEFORE
     reader = InfluxReader.from_env()
-    if not reader.ping():
-        print("Error: Could not connect / ping InfluxDB", file=sys.stderr)
-        sys.exit(1)
+    before_counts: Dict[str, int] = {}
+    try:
+        if not reader.ping():
+            print("CANNOT READ INFLUXDB: InfluxDB ping failed")
+            sys.exit(2)
+
+        for m in reserved_measurements:
+            cnt = reader.count_field_values(m)
+            before_counts[m] = cnt
+    except ReadError as e:
+        print(f"CANNOT READ INFLUXDB: {e}")
+        sys.exit(2)
 
     print("\nReading baseline InfluxDB field-value counts BEFORE test...")
-    before_counts: Dict[str, int] = {}
     for m in reserved_measurements:
-        cnt = reader.count_field_values(m)
-        before_counts[m] = cnt
-        print(f"  [Reserved] {m:22s} : {cnt:6d} field values")
+        print(f"  [Reserved] {m:22s} : {before_counts[m]:6d} field values")
 
     # 2. Extract records with marked voltage_v
     valid_recs, invalid_recs, expected_voltages = extract_smoke_records(args.file, run_marker)
@@ -302,18 +308,23 @@ def main():
     # 4. Check InfluxDB reserved measurement counts AFTER
     print("\nReading InfluxDB field-value counts AFTER test...")
     reserved_changed = False
-    for m in reserved_measurements:
-        cnt = reader.count_field_values(m)
-        diff = cnt - before_counts[m]
-        status = "OK (unchanged)" if diff == 0 else f"VIOLATION (+{diff})"
-        print(f"  [Reserved] {m:22s} : {cnt:6d} field values -> {status}")
-        if diff != 0:
-            reserved_changed = True
+    try:
+        for m in reserved_measurements:
+            cnt = reader.count_field_values(m)
+            diff = cnt - before_counts[m]
+            status = "OK (unchanged)" if diff == 0 else f"VIOLATION (+{diff})"
+            print(f"  [Reserved] {m:22s} : {cnt:6d} field values -> {status}")
+            if diff != 0:
+                reserved_changed = True
 
-    # 5. Read back by (site_id, _time) and verify exact marked voltage_v
-    print("\nVerifying readback of 6 marked rows by (site_id, _time)...")
-    voltage_errors = verify_influx_voltages(reader, readings_measurement, expected_voltages)
-    reader.close()
+        # 5. Read back by (site_id, _time) and verify exact marked voltage_v
+        print("\nVerifying readback of 6 marked rows by (site_id, _time)...")
+        voltage_errors = verify_influx_voltages(reader, readings_measurement, expected_voltages)
+    except ReadError as e:
+        print(f"CANNOT READ INFLUXDB: {e}")
+        sys.exit(2)
+    finally:
+        reader.close()
 
     # 6. Evaluate all pass conditions
     failed_checks: List[str] = []

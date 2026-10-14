@@ -88,27 +88,45 @@ Write-Host "  Saved PIDs to $pidFile"
 # 5. Wait for /health endpoint
 Write-Host "`nWaiting for API health check..." -ForegroundColor Cyan
 $healthUrl = "http://127.0.0.1:8000/health"
-$maxAttempts = 15
+$maxAttempts = 45
 $attempt = 0
 $healthy = $false
+$lastResp = $null
 
 while ($attempt -lt $maxAttempts -and -not $healthy) {
     Start-Sleep -Seconds 1
     $attempt++
     try {
         $resp = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2 -ErrorAction Stop
-        if ($resp.status -eq "ok") {
+        $lastResp = $resp
+        if ($resp.status -eq "ok" -and $resp.influx_connected -eq $true) {
             $healthy = $true
         }
     } catch {
-        # continue waiting
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $streamReader = New-Object System.IO.StreamReader($stream)
+                $lastResp = $streamReader.ReadToEnd()
+            } catch {}
+        }
     }
 }
 
 if ($healthy) {
     Write-Host "  [OK] Backend API is healthy!" -ForegroundColor Green
 } else {
-    Write-Warning "API did not respond healthy within $maxAttempts seconds. Check service windows for errors."
+    Write-Warning "API did not respond healthy within $maxAttempts seconds."
+    if ($lastResp) {
+        if ($lastResp -is [string]) {
+            Write-Host "Health JSON: $lastResp" -ForegroundColor Yellow
+        } else {
+            $json = $lastResp | ConvertTo-Json -Depth 5
+            Write-Host "Health JSON:`n$json" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Warning "API endpoint at $healthUrl could not be reached."
+    }
 }
 
 # 6. Print connection endpoints

@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.rest import ApiException
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.client.write_api import WriteOptions, WriteType
+import urllib3.util
 
 from backend.config import verify_startup_safety
 from backend.points import PointSpec
@@ -45,12 +46,28 @@ class InfluxWriter:
         self.org = org
         self.bucket = bucket
 
+        retries = urllib3.util.Retry(
+            total=3,
+            connect=3,
+            read=False,
+            redirect=False,
+            status=3,
+            backoff_factor=0.5,
+        )
         self.client = InfluxDBClient(
             url=self.url,
             token=self._token,
             org=self.org,
+            timeout=(10000, 30000),  # connect 10s, read 30s
+            retries=retries,
         )
-        self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
+        write_options = WriteOptions(
+            write_type=WriteType.synchronous,
+            max_retries=3,
+            retry_interval=1000,
+            exponential_base=2,
+        )
+        self.write_api = self.client.write_api(write_options=write_options)
         self.query_api = self.client.query_api()
 
     @classmethod

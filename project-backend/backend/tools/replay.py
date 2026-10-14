@@ -8,6 +8,7 @@ Usage:
     python -m backend.tools.replay --stream readings --file ../pv_fault_dataset.csv --window OPERATION --transport http
 """
 import argparse
+from collections import Counter
 import csv
 from datetime import datetime
 import json
@@ -130,6 +131,26 @@ def load_and_filter_records(
     return records
 
 
+def _send_http_request_with_retries(
+    client: httpx.Client,
+    url: str,
+    headers: Dict[str, str],
+    payload: Any,
+    max_retries: int = 3,
+    initial_backoff: float = 0.5,
+) -> httpx.Response:
+    """Sends HTTP POST with up to 3 retries and exponential backoff on connection errors."""
+    for attempt in range(max_retries + 1):
+        try:
+            return client.post(url, headers=headers, json=payload)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as e:
+            if attempt == max_retries:
+                print(f"HTTP connection failed after {max_retries} retries ({type(e).__name__}): {e}", file=sys.stderr)
+                raise
+            delay = initial_backoff * (2 ** attempt)
+            time.sleep(delay)
+
+
 def run_http_replay(
     records: List[Dict[str, Any]],
     stream: str,
@@ -138,25 +159,58 @@ def run_http_replay(
     batch_size: int,
     speed: float,
 ) -> None:
-    """Sends records via HTTP ingest API with batching and speed control."""
+    """Sends records via HTTP ingest API with batching, retries, and speed control.
+    Adds up API responses and prints totals: accepted, rejected, written, write_failed
+    and reasons per code. Exits non-zero if write_failed > 0 or any request returned non-200.
+    """
     url = f"{api_url}/api/v1/ingest/{stream}"
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
 
     total = len(records)
     print(f"\n[HTTP] Starting replay of {total} records to {url} (batch_size={batch_size}, speed={speed})...")
 
-    prev_dt: Optional[datetime] = None
-    sent = 0
+    total_accepted = 0
+    total_rejected = 0
+    total_written = 0
+    total_write_failed = 0
+    total_reasons: Counter[str] = Counter()
+    has_http_error = False
 
-    with httpx.Client(timeout=30.0) as client:
+    # Explicit timeouts: connect 10s, read 30s
+    timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
+
+    with httpx.Client(timeout=timeout) as client:
+        prev_dt: Optional[datetime] = None
+        sent = 0
+
         if speed == 0:
-            # Send in batches of batch_size as fast as possible
+            # Send in batches of batch_size
             for i in range(0, total, batch_size):
                 batch = records[i : i + batch_size]
-                resp = client.post(url, headers=headers, json=batch)
+                try:
+                    resp = _send_http_request_with_retries(client, url, headers, batch)
+                except Exception as e:
+                    print(f"HTTP Request exception: {e}", file=sys.stderr)
+                    has_http_error = True
+                    break
+
                 if resp.status_code != 200:
                     print(f"HTTP Error {resp.status_code}: {resp.text}", file=sys.stderr)
-                    sys.exit(1)
+                    has_http_error = True
+                    break
+
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {}
+
+                total_accepted += data.get("accepted", 0)
+                total_rejected += data.get("rejected", 0)
+                total_written += data.get("written", 0)
+                total_write_failed += data.get("write_failed", 0)
+                for code, cnt in data.get("reasons", {}).items():
+                    total_reasons[code] += cnt
+
                 sent += len(batch)
                 if sent % 500 < batch_size or sent == total:
                     print(f"  Progress: {sent}/{total} rows sent...")
@@ -171,13 +225,52 @@ def run_http_replay(
                         time.sleep(delay)
                 prev_dt = curr_dt
 
-                resp = client.post(url, headers=headers, json=rec)
+                try:
+                    resp = _send_http_request_with_retries(client, url, headers, rec)
+                except Exception as e:
+                    print(f"HTTP Request exception: {e}", file=sys.stderr)
+                    has_http_error = True
+                    break
+
                 if resp.status_code != 200:
                     print(f"HTTP Error {resp.status_code}: {resp.text}", file=sys.stderr)
-                    sys.exit(1)
+                    has_http_error = True
+                    break
+
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {}
+
+                total_accepted += data.get("accepted", 0)
+                total_rejected += data.get("rejected", 0)
+                total_written += data.get("written", 0)
+                total_write_failed += data.get("write_failed", 0)
+                for code, cnt in data.get("reasons", {}).items():
+                    total_reasons[code] += cnt
+
                 sent += 1
                 if sent % 500 == 0 or sent == total:
                     print(f"  Progress: {sent}/{total} rows sent...")
+
+    # Print totals
+    print("\n=== HTTP Replay Totals ===")
+    print(f"  Accepted:     {total_accepted}")
+    print(f"  Rejected:     {total_rejected}")
+    print(f"  Written:      {total_written}")
+    print(f"  Write Failed: {total_write_failed}")
+    if total_reasons:
+        print(f"  Reasons:      {dict(sorted(total_reasons.items()))}")
+    else:
+        print("  Reasons:      {}")
+
+    if has_http_error:
+        print("Error: Replay encountered a non-200 HTTP response or connection failure.", file=sys.stderr)
+        sys.exit(1)
+
+    if total_write_failed > 0:
+        print(f"Error: {total_write_failed} points failed to write to InfluxDB.", file=sys.stderr)
+        sys.exit(1)
 
 
 def run_mqtt_replay(
@@ -187,6 +280,7 @@ def run_mqtt_replay(
     mqtt_port: int,
     batch_size: int,
     speed: float,
+    file_path: Optional[Path] = None,
 ) -> None:
     """Publishes records via MQTT with QoS 1 and speed control."""
     client_id = f"replay-{stream}-{os.getpid()}"
@@ -202,11 +296,9 @@ def run_mqtt_replay(
 
     if speed == 0:
         # Group into batches of batch_size by site_id, or send row-by-row
-        # Batching up to batch_size per site sends array payloads
         i = 0
         while i < total:
             current_site = records[i].get("site_id")
-            # Collect consecutive rows of the same site up to batch_size
             batch = []
             while i < total and len(batch) < batch_size and records[i].get("site_id") == current_site:
                 batch.append(records[i])
@@ -244,6 +336,13 @@ def run_mqtt_replay(
 
     client.loop_stop()
     client.disconnect()
+
+    print(f"\n[MQTT] Replay complete: {sent} rows published.")
+    print("Reminder: Run verify_backend to confirm all published points were written to InfluxDB:")
+    if file_path:
+        print(f"  python -m backend.tools.verify_backend --stream {stream} --file {file_path}")
+    else:
+        print(f"  python -m backend.tools.verify_backend --stream {stream} --file <dataset_csv>")
 
 
 def main():
@@ -322,6 +421,7 @@ def main():
             mqtt_port=args.mqtt_port,
             batch_size=args.batch_size,
             speed=args.speed,
+            file_path=args.file,
         )
 
     elapsed = time.time() - start_time
