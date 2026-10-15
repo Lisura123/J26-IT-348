@@ -94,16 +94,16 @@ Datasets are **never committed** (`data/raw/` is git-ignored). The README record
 
 | # | Feature | Formula | PV meaning |
 |---|---|---|---|
-| f1 | `v_deficit` | `a + b·ln(G) − V`, with `G = lux/120` | voltage drop vs expected Voc-like curve at this irradiance (shading, short) |
-| f2 | `i_norm` | `I / G` (mA per W/m²) | current per irradiance (dust, shading, open) |
-| f3 | `p_norm` | `P / G` | performance ratio proxy |
+| f1 | `v_deficit` | `a + b·ln(klx) + c·(T_panel − 25) − V`, with `klx = lux/1000` | voltage drop vs the fitted healthy-panel voltage at this light and temperature (shading, short) |
+| f2 | `i_norm` | `I / klx` (mA per klx) | current per unit of light (dust, shading, open) |
+| f3 | `p_norm` | `P / klx` (mW per klx) | performance ratio proxy |
 | f4 | `dust_vo_v` | raw | dust sensor output |
 | f5 | `temp_spread` | `|T1 − T2|` | hotspot from partial shading |
 | f6 | `temp_rise` | `(T1+T2)/2 − Tamb` | thermal load |
 | f7 | `voltage_v` | raw | needed for short-circuit detection near 0 V |
 | f8 | `current_ma` | raw | needed for open-circuit detection near 0 mA |
 
-- `lux/120` is the group contract conversion (Member 1 `entropy_weighting.py`, Member 4 `inputs.py`).
+- Irradiance is used in lux (kilolux). The group convention `lux/120` (Member 1 `entropy_weighting.py`, Member 4 `inputs.py`) is not applied, because it is not a calibration. Implemented as `pv8-v1` in `src/tinyml/features.py`; full definitions, gating and placeholders are in `docs/FEATURES.md`.
 - **Low-light gate:** if `G < G_min` (placeholder 20 W/m², i.e. 2,400 lx; to be tuned on data), no ML inference is run. The reading gets `prediction_status = SKIPPED_LOW_LIGHT` and `predicted_label = null`. It is **not** reported as `NORMAL`, because "no decision" is not "healthy". The ratio features become unstable at very low irradiance, so classifying there is unreliable. Electrical rule guards (§7.4) still run, because a short or open circuit can be detected without irradiance.
 - **Lux saturation:** if lux ≥ the sensor maximum, `G` is unknown. f1–f3 are unreliable, so the reading gets `prediction_status = SKIPPED_LUX_SATURATED` unless a rule guard fires. A degraded ML fallback without f1–f3 is a possible later extension.
 - **Invalid input** (NaN, DS18B20 sentinels −127/−999, out-of-range values): `prediction_status = SKIPPED_INVALID_INPUT`.
@@ -181,9 +181,9 @@ Weight layout `W1 (8,16), b1, W2 (16,5), b2` matches `component3-…/src/mlp.py 
 | Field | Kind | Source of the real value |
 |---|---|---|
 | `labels`, `features`, `activation` | **fixed by design** (this document) | §5, §6 |
-| `feature_params.lux_per_wm2` | **fixed by group contract** (lux/120) | group data contract |
-| `feature_params.voc_a`, `voc_b` | **trained** (fitted on train fold) | Phase 5/7 |
-| `feature_params.g_min_wm2` | **placeholder**, tuned on data | Phase 5 |
+| `feature_params.lux_per_unit` | **fixed by design** (1000, kilolux scale) | `docs/FEATURES.md` |
+| `feature_params.vref` (a, b, c) | **trained** (fitted on train fold) | Phase 5 code, fitted during training |
+| `feature_params.low_light_lux`, `lux_saturation` | **placeholder**, tuned on data / sensor spec | `docs/FEATURES.md` §7 |
 | `scaler.mean`, `scaler.std` | **trained** | Phase 7 |
 | `weights.*` | **trained** | Phase 7 / FL rounds |
 | `rules.*` | **placeholder**, needs Member 1 hardware confirmation | §7.4, R6 |
@@ -196,7 +196,7 @@ Weight layout `W1 (8,16), b1, W2 (16,5), b2` matches `component3-…/src/mlp.py 
   "feature_version": "pv8-v1",
   "labels": ["NORMAL","PARTIAL_SHADING","DUST","OPEN_CIRCUIT","SHORT_CIRCUIT"],
   "features": ["v_deficit","i_norm","p_norm","dust_vo_v","temp_spread","temp_rise","voltage_v","current_ma"],
-  "feature_params": {"lux_per_wm2": 120.0, "voc_a": "<TRAINED>", "voc_b": "<TRAINED>", "g_min_wm2": "<PLACEHOLDER 20.0>"},
+  "feature_params": {"lux_per_unit": 1000.0, "vref": {"a": "<TRAINED>", "b": "<TRAINED>", "c": "<TRAINED>"}, "low_light_lux": "<PLACEHOLDER 2400>", "lux_saturation": "<PLACEHOLDER 100000>"},
   "scaler": {"mean": "<TRAINED: 8 floats>", "std": "<TRAINED: 8 floats>"},
   "activation": "tanh",
   "weights": {"W1": "<TRAINED: 8x16>", "b1": "<TRAINED: 16>", "W2": "<TRAINED: 16x5>", "b2": "<TRAINED: 5>"},
