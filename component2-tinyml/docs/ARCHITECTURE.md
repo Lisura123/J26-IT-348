@@ -16,7 +16,7 @@ Design principles:
 3. **ML never actuates hardware by itself.** Any future relay action comes only from deterministic electrical rules that Member 1 validates against the hardware. ML is advisory.
 4. **Simplest model that meets integration constraints.** Every model is compared against threshold rules and logistic regression.
 5. **No claim without measurement.** Size, RAM and latency claims come from on-device measurements, not estimates.
-6. **Data honesty.** Dataset provenance is **UNRESOLVED**. The group data contracts describe the data as synthetic, while Member 1 states it is laboratory data. Until Member 1 provides primary evidence (firmware, raw logs, run records), no result is described as validated on real laboratory data (§12, R1).
+6. **Data honesty.** The dataset is the PV sensor dataset provided by Member 1. Dataset provenance is **UNRESOLVED**. Until Member 1 provides primary evidence (firmware, raw logs, run records), no result is described as validated on real laboratory data (§12, R1).
 7. **Never hide a non-decision.** A reading that is not classified gets an explicit status. It is never silently reported as `NORMAL`.
 
 ---
@@ -29,7 +29,7 @@ Design principles:
 | The 5 per-class files are **exact copies** of the combined rows for their class (same rows, values, order) | read-only check of uploaded `pv_<label>.csv` vs combined: 0 missing, 0 mismatched, 0 extra |
 | `member2_fault_predictions.csv` is a **stand-in**, not ground truth: OPERATION rows only, 72.07% agreement with labels, identical to the prediction columns of Member 4's `digital_twin_input.csv` (`0cb3777`, yohan317) | computed |
 | `health_score` is a label proxy (74.6% run-wise accuracy on its own) | computed |
-| Both data contracts state the data is dummy/synthetic (De Soto single-diode model) | `docs/DATA_CONTRACT.md` (`665de11`), `component3-…/data/shared/DATA_CONTRACT.md` |
+| Dataset: PV sensor dataset provided by Member 1; group data contracts describe its origin and must be reconciled with Member 1 | `docs/DATA_CONTRACT.md` (`665de11`), `component3-…/data/shared/DATA_CONTRACT.md` |
 | No firmware exists on any branch; sensor models and resolution are undocumented | `git ls-tree` over all branches |
 | Member 3 FL model: **8-16-5 MLP, tanh by default, 229 parameters hard-coded** (`N_PARAMS = 229`; LoRa payload sized as 68 B header + 229 int8) | `component3-…/src/mlp.py`, `src/compression.py`, `src/engine.py --activation default tanh` |
 | Member 4 runs the FL model itself with **ReLU** (hard-coded `np.maximum(0, …)`) and an 8-feature scaler from `fl_global_model_history.json` (see §6.4) | `component4-…/src/twin/tinyml_model.py` |
@@ -379,7 +379,7 @@ component2-tinyml/
 ## 12. Unresolved risks and questions
 | # | Risk / question | Impact | Owner |
 |---|---|---|---|
-| R1 | **Dataset provenance: UNRESOLVED.** Contracts say synthetic; Member 1 says lab data; 4 cross-site run pairs overlap in time; no firmware or raw logs in the repo. Stays unresolved until Member 1 provides firmware, raw logs and run records | results may not transfer to real panels; academic integrity | Member 1 → evidence; Member 2 → document in `DATA_PROVENANCE.md` |
+| R1 | **Dataset provenance: UNRESOLVED.** PV sensor dataset provided by Member 1; group contracts to be reconciled with Member 1; 4 cross-site run pairs overlap in time; no firmware or raw logs in the repo. Stays unresolved until Member 1 provides firmware, raw logs and run records | results may not transfer to real panels; academic integrity | Member 1 → evidence; Member 2 → document in `DATA_PROVENANCE.md` |
 | R2 | **Task too easy on current data** (rules ≈ 97–98%) | weak justification for ML; must be addressed in the thesis | Member 2 |
 | R3 | **Activation mismatch** (Member 3 tanh, Member 4 ReLU), see §6.4 | silent wrong predictions/SHAP in the twin | Members 3/4; contract field proposed |
 | R4 | **Feature change needs Member 3 agreement** (same dimension, new meaning + scaler) | FL trains the wrong function if not aligned | Members 2/3 |
