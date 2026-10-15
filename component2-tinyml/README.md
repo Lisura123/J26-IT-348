@@ -19,7 +19,8 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | 5 Run-wise data splitting (`src/tinyml/splits.py`, `results/split_summary.md`) | done |
 | PV feature layer (`src/tinyml/features.py`, `docs/FEATURES.md`) | done; not yet evaluated |
 | Google Colab environment check (`notebooks/colab_train.ipynb`, `results/colab_env_check.json`) | done; run in Colab, 91 tests passed |
-| Model training, quantization, ESP32 deployment | not started |
+| Phase 7 baseline comparison code (`experiment.py`, `docs/BASELINES.md`, `notebooks/colab_phase7_baselines.ipynb`) | code ready; experiments to be run in Colab |
+| Final model training, quantization, ESP32 deployment | not started |
 
 Colab (scikit-learn 1.6.1) and local (1.9.1) gave identical splits and features. The
 scikit-learn-based `health_score` leakage score differed (0.6945 in Colab vs 0.7457 locally).
