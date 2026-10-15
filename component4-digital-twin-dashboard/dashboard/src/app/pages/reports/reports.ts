@@ -9,7 +9,7 @@ import { TwinApi } from '../../core/twin-api.service';
   imports: [DecimalPipe, PercentPipe],
   template: `
     <h2>Digital-twin evaluation</h2>
-    <p class="muted">Synthetic dataset (16 Mar – 15 Sept 2026). Ground truth is used only for scoring.</p>
+    <p class="muted">Evaluation  dataset (16 Mar – 15 Sept 2026). Ground truth is used only for scoring.</p>
     @if (m(); as m) {
       <div class="tiles">
         <div class="card tile"><span class="label">Power RMSE vs truth</span>
