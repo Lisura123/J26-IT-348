@@ -1,0 +1,47 @@
+{
+ "commit": "3c1f1a4 Implement PV-Specific Feature Engineering",
+ "python": "3.13.16",
+ "numpy": "2.1.3",
+ "pandas": "2.2.3",
+ "sklearn": "1.6.1",
+ "dataset_sha256_ok": true,
+ "dataset_shape": [
+  6000,
+  20
+ ],
+ "validation_errors": 0,
+ "validation_warnings": 4,
+ "health_score_runwise_accuracy": {
+  "health_score": 0.6945
+ },
+ "split_folds": {
+  "cv": 5,
+  "temporal": 1,
+  "loso": 6
+ },
+ "fold": "cv0",
+ "train_matrix_shape": [
+  2324,
+  8
+ ],
+ "validation_matrix_shape": [
+  600,
+  8
+ ],
+ "vref": {
+  "a": 2.564508592913609,
+  "b": 0.07113499567157856,
+  "c": -0.009468058945821763
+ },
+ "feature_checks": {
+  "8 features in agreed order": true,
+  "training inputs finite": true,
+  "validation inputs finite": true,
+  "inputs are float32": true,
+  "fitted on training rows only": true,
+  "no run in both train and validation": true,
+  "OPERATION rows not used": true,
+  "training features scaled (mean~0, std~1)": true
+ },
+ "tests": "91 passed in 5.62s"
+}
