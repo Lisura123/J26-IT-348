@@ -14,7 +14,7 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | 1 Component initialization, column contract | done |
 | Architecture design (`docs/ARCHITECTURE.md`) | done |
 | 2 Dataset validation (`src/tinyml/validate.py`, `results/dataset_validation.md`) | done |
-| 3 Dataset provenance documentation | planned |
+| 3 Dataset provenance documentation (`docs/DATA_PROVENANCE.md`) | done (provenance open) |
 | 4 Sensor feature and label verification | planned |
 | 5 Run-wise data splitting | planned |
 | Model training, quantization, ESP32 deployment | not started |
