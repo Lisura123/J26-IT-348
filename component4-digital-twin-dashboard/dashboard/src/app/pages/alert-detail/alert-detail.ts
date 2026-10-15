@@ -2,7 +2,6 @@ import { DecimalPipe, PercentPipe } from '@angular/common';
 import { Component, ElementRef, OnDestroy, effect, inject, input, signal, viewChild } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Chart, registerables } from 'chart.js';
-import { AuthService } from '../../core/auth.service';
 import { AlertDetail, ShapExplanation } from '../../core/models';
 import { TwinApi } from '../../core/twin-api.service';
 import { ColomboTimePipe } from '../../shared/colombo-time';
@@ -12,10 +11,7 @@ Chart.register(...registerables);
 const UP = '#d84315';     // pushes the model TOWARDS its predicted fault
 const DOWN = '#1565c0';   // pushes the model AWAY from it
 
-/**
- * One alert end to end: physics evidence -> recommendation -> TinyML explanation (SHAP).
- * The SHAP chart is drawn only if the API sent it (roles with view_shap).
- */
+
 @Component({
   selector: 'app-alert-detail',
   imports: [RouterLink, DecimalPipe, PercentPipe, ColomboTimePipe],
@@ -43,9 +39,9 @@ const DOWN = '#1565c0';   // pushes the model AWAY from it
         </div>
       </div>
 
-      <div class="card">
-        <h3>3 · Why TinyML predicted what it did (SHAP)</h3>
-        @if (a.shap; as s) {
+      @if (a.shap; as s) {
+        <div class="card">
+          <h3>3 · Why TinyML predicted what it did (SHAP)</h3>
           <p>Reading <code>{{ s.record_id }}</code> · model <strong>{{ s.model_version }}</strong> predicted
             <strong>{{ s.predicted_fault }}</strong> ({{ s.confidence | percent: '1.0-0' }}) ·
             base value {{ s.base_value | number: '1.2-2' }}
@@ -58,11 +54,8 @@ const DOWN = '#1565c0';   // pushes the model AWAY from it
             <span [style.color]="up">■ pushes towards {{ s.predicted_fault }}</span> ·
             <span [style.color]="down">■ pushes away</span>.
             Base value + all bars = {{ s.confidence | percent: '1.0-0' }}.</p>
-        } @else {
-          <p class="muted">SHAP feature explanations are not available for the {{ auth.user()?.role }} role.
-            The physics explanation and recommended action above are the operational summary.</p>
-        }
-      </div>
+        </div>
+      }
     } @else if (error()) {
       <p class="error">{{ error() }}</p>
     }
@@ -80,7 +73,6 @@ const DOWN = '#1565c0';   // pushes the model AWAY from it
 })
 export class AlertDetailPage implements OnDestroy {
   private api = inject(TwinApi);
-  auth = inject(AuthService);
 
   id = input.required<string>();
   canvas = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
