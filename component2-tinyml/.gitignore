@@ -5,3 +5,7 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .env
+
+# raw datasets stay local (provenance unresolved; see docs/ARCHITECTURE.md)
+data/
+*.csv

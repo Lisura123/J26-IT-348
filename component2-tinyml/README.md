@@ -12,7 +12,8 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | Phase | Status |
 |---|---|
 | 1 Component initialization, column contract | done |
-| 2 Dataset validation | planned |
+| Architecture design (`docs/ARCHITECTURE.md`) | done |
+| 2 Dataset validation (`src/tinyml/validate.py`, `results/dataset_validation.md`) | done |
 | 3 Dataset provenance documentation | planned |
 | 4 Sensor feature and label verification | planned |
 | 5 Run-wise data splitting | planned |
@@ -22,10 +23,12 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 
 ```
 component2-tinyml/
-  src/tinyml/      Python package (contract.py: column roles and labels)
+  src/tinyml/      Python package (contract.py: column roles; validate.py: dataset checks)
   tests/           pytest tests
-  docs/            provenance and design notes (planned)
-  scripts/         numbered pipeline scripts (planned)
+  docs/            architecture, provenance and design notes
+  scripts/         numbered pipeline scripts
+  results/         generated reports (small, committed)
+  data/raw/        datasets, local only (git-ignored)
 ```
 
 ### Setup
@@ -36,11 +39,15 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pytest
+
+# put pv_fault_dataset.csv (and optional pv_<label>.csv, sites.csv,
+# member2_fault_predictions.csv) in data/raw/, then:
+python scripts/01_validate_dataset.py --data-dir data/raw
 ```
 
 ### Data rules
 
 - `health_score` is a label proxy and is never a model input.
 - Splits are run-wise (`run_id`), never random row splits.
-- `pv_fault_dataset.csv` is labelled as synthetic in the group data contract;
+- `pv_fault_dataset.csv` is the PV sensor dataset provided by Member 1;
   its provenance is still being verified with Member 1.
