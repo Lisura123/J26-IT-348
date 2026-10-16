@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 
@@ -25,8 +24,10 @@ def classify(df: pd.DataFrame) -> pd.Series:
     dust = ((df.dust_vo_v >= C.DUST_SENSOR_V)
             & (df.voltage_residual_pct > C.DUST_V_RESID_MIN_PCT)
             & (df.power_residual_pct < 0))
+    hotspot = df.panel_temp_spread_c >= C.SHADE_TEMP_SPREAD_C
+    no_spread = df.panel_temp_spread_c.isna()
     shade = ((df.voltage_residual_pct <= C.SHADE_V_RESID_PCT)
-             & (df.panel_temp_spread_c >= C.SHADE_TEMP_SPREAD_C)
+             & (hotspot | no_spread)
              & (df.power_residual_pct < 0))
     cause = np.select([inside, short, open_, dust, shade],
                       ["NORMAL", "SHORT_CIRCUIT", "OPEN_CIRCUIT", "DUST", "PARTIAL_SHADING"],
@@ -38,6 +39,12 @@ def explain(r) -> str:
     head = (f"Actual {r.power_mw:.0f} mW vs twin expected {r.expected_power_mw:.0f} mW "
             f"(90% band {r.power_band_low_mw:.0f}-{r.power_band_high_mw:.0f} mW) "
             f"at ~{r.irradiance_wm2_est:.0f} W/m²; ")
+    if pd.notna(r.panel_temp_spread_c):
+        shade_text = (f"voltage is {abs(r.voltage_residual_pct):.0f}% below expected and panel probes "
+                      f"differ by {r.panel_temp_spread_c:.1f} °C, consistent with a shaded-cell hotspot.")
+    else:
+        shade_text = (f"voltage is {abs(r.voltage_residual_pct):.0f}% below expected, consistent with "
+                      f"partial shading (single panel probe: hotspot not thermally confirmed).")
     why = {
         "NORMAL": "output is inside the expected band.",
         "SHORT_CIRCUIT": f"voltage collapsed to {r.voltage_v:.2f} V while current rose to "
@@ -45,8 +52,7 @@ def explain(r) -> str:
         "OPEN_CIRCUIT": f"current is ~0 mA while voltage sits at open-circuit level ({r.voltage_v:.2f} V).",
         "DUST": f"dust sensor reads {r.dust_vo_v:.2f} V and current is "
                 f"{abs(r.current_residual_pct):.0f}% below expected with voltage near normal.",
-        "PARTIAL_SHADING": f"voltage is {abs(r.voltage_residual_pct):.0f}% below expected and panel probes "
-                           f"differ by {r.panel_temp_spread_c:.1f} °C, consistent with a shaded-cell hotspot.",
+        "PARTIAL_SHADING": shade_text,
         "UNEXPLAINED_LOSS": "output is outside the expected band but matches no known fault signature.",
     }[r.physics_cause]
     verdict = "agrees" if r.ml_physics_agree else f"disagrees with physics ({r.physics_cause}); flag for review"

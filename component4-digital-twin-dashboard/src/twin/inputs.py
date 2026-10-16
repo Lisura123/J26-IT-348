@@ -40,13 +40,15 @@ def estimate_irradiance(lux: pd.Series, ghi_api: pd.Series):
 
 
 def clean_probes(df: pd.DataFrame) -> pd.DataFrame:
-    """Mean and spread of the two panel probes; DS18B20 error codes become NaN."""
     t1 = df["panel_temp1_c"].where(~df["panel_temp1_c"].isin(PROBE_INVALID))
-    t2 = df["panel_temp2_c"].where(~df["panel_temp2_c"].isin(PROBE_INVALID))
+    if "panel_temp2_c" in df:
+        t2 = df["panel_temp2_c"].where(~df["panel_temp2_c"].isin(PROBE_INVALID))
+    else:
+        t2 = pd.Series(np.nan, index=df.index)
     return pd.DataFrame({
         "panel_temp_mean_c": pd.concat([t1, t2], axis=1).mean(axis=1),
-        "panel_temp_spread_c": (t1 - t2).abs(),   # large spread = hotspot (shading)
-        "probe_fault": t1.isna() | t2.isna(),
+        "panel_temp_spread_c": (t1 - t2).abs(),
+        "probe_fault": t1.isna(),
     }, index=df.index)
 
 
