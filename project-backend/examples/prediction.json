@@ -1,0 +1,14 @@
+{
+  "_comment": "PLACEHOLDER: Proposed prediction schema. Member 2 (TinyML) must confirm final field names, classes, and types. Do not ingest.",
+  "record_id": "REC-03001",
+  "timestamp_utc": "2026-09-10T01:49:00Z",
+  "site_id": "SITE-B",
+  "device_id": "ESP32-B01",
+  "predicted_label": "NORMAL",
+  "confidence": 0.962,
+  "prob_normal": 0.962,
+  "prob_partial_shading": 0.015,
+  "prob_dust": 0.012,
+  "prob_open_circuit": 0.006,
+  "prob_short_circuit": 0.005
+}

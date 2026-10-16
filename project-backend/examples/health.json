@@ -1,0 +1,8 @@
+{
+  "_comment": "DEMO FIXTURE: Extracted from pv_fault_dataset.csv for demo/testing only. Member 1 must confirm final health stream schema.",
+  "record_id": "REC-03001",
+  "timestamp_utc": "2026-09-10T01:49:00Z",
+  "site_id": "SITE-B",
+  "device_id": "ESP32-B01",
+  "health_score": 0.985
+}
