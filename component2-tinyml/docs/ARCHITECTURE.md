@@ -289,15 +289,23 @@ The dataset is small (6k rows) and trains on CPU in seconds. Colab is for conven
 ### 9.1 Deployment candidates (final choice made from ESP32 measurements)
 | Variant | Description | Status |
 |---|---|---|
-| A. Float32 | hand-written C (FPU), weights from `model_params.h`; optionally TFLM float32 for comparison | **candidate** |
-| B. INT8 | TFLM, full-integer per-tensor quantisation (per-channel Dense was unsupported in the earlier `tflm_esp32` test) | **candidate** |
+| A. Float32 | Float32 preprocessing + hand-written Float32 MLP in portable C (`firmware/pv_fault/pv_mlp_f32.c`), weights generated into `pv_model_f32.h`. Deployment **fallback** and reference | **candidate** |
+| B. INT8 | Float32 preprocessing + **custom INT8 MLP core** in portable C (`pv_mlp_int8.c`): symmetric per-tensor int8 weights, int32 biases and accumulators, fixed-point rescaling, int8 tanh lookup table (`docs/QUANTIZATION.md`). TFLM is not used (see below) | **candidate** |
 
 Both are built, run on the same ESP32 board and the same test readings, and measured on:
 - flash (bytes, from build map), RAM (heap before/after init + arena size), latency (µs, mean and p95 over ≥ 1,000 inferences, `esp_timer_get_time()`);
-- macro-F1 and OPEN/SHORT recall on the held-out set (on-device outputs vs Python reference);
+- agreement of on-device outputs with the Python reference on the golden vectors, and INT8-vs-Float32 agreement on TRAINING rows (see the change note below);
 - optional: energy per inference.
 
-**Selection rule (fixed before measuring):** choose INT8 only if its macro-F1 drop is ≤ 1 percentage point, OPEN/SHORT recall does not drop, and it gives a measurable flash, RAM or latency benefit. Otherwise choose Float32. Either outcome is reported as a result. No improvement is claimed before measurement. The TF/TFLM versions used are recorded.
+**Selection rule (fixed before measuring):** choose INT8 only if its macro-F1 drop is ≤ 1 percentage point, OPEN/SHORT recall does not drop, and it gives a measurable flash, RAM or latency benefit. Otherwise choose Float32. Either outcome is reported as a result. No improvement is claimed before measurement. The compiler and library versions used are recorded.
+
+**Change (Phase 10, approved by Member 2): custom INT8 instead of TFLM.** Variant B was first planned with TensorFlow Lite Micro. It was changed to a custom INT8 C core because:
+1. **Size:** the model has 229 parameters (about 0.3 KB as INT8). The TFLM runtime and kernels would be far larger than the model itself; the custom core is a few hundred lines of C with no runtime.
+2. **Exact verification:** the custom integer arithmetic is reproduced bit for bit by a Python emulator (`src/tinyml/quantize.py`), so host C tests compare C and Python exactly. A converter-chosen quantisation is harder to reproduce.
+3. **No heavy dependency:** no TensorFlow is needed to build the INT8 version; NumPy and a C compiler are enough.
+4. **Federated learning:** the float contract stays the source of truth (229-value layout unchanged). Any future TRAINED float contract, for example from an FL round, is turned into an INT8 build by the same generator.
+
+**Held-out data for the INT8 check:** the OPERATION window has already been used for the single final test (`OPERATION_RESULTS.md`), so it is not used again. The INT8-vs-Float32 accuracy check uses TRAINING rows plus golden test vectors (`QUANTIZATION.md` §6). This is optimistic and is not a held-out estimate. On-device outputs are compared with the Python reference on the golden vectors. Flash, RAM and latency are still measured on the ESP32 before any choice; nothing is claimed before that.
 
 ### 9.2 Pruning decision vs the original research proposal
 | | |
