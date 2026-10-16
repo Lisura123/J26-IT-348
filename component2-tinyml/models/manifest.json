@@ -1,0 +1,10 @@
+{
+ "artifact_kind": "LOCAL_TRAINED_WEIGHTS",
+ "files": {
+  "feature_config.json": "421b5d4ed7e2092b6da3e2f2f48e000a0ecda5ef0542e5a660c65fd607128a86",
+  "model_contract.json": "752f62285cca62b59a629686fd5b941b748a811c78808751c04595ee3452cb2a",
+  "training_metadata.json": "76389fc889c9b0097ba0d944c32e535930c835c7d15beef018b1d00f48f5501c"
+ },
+ "model_version": "c2-local-v1",
+ "weights_sha256": "94e7ab9384a1906ec2cf0d3176b435e700f15cd99552fbc6c71519c648ecc3a7"
+}

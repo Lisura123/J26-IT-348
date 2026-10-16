@@ -21,7 +21,8 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | Google Colab environment check (`notebooks/colab_train.ipynb`, `results/colab_env_check.json`) | done; run in Colab, 91 tests passed |
 | Phase 7 baseline comparison code (`experiment.py`, `docs/BASELINES.md`, `notebooks/colab_phase7_baselines.ipynb`) | code ready; experiments to be run in Colab |
 | Baseline comparison results (`docs/PHASE7_RESULTS.md`) | done; physics8 + 8-16-5 tanh MLP selected |
-| Final training and export code (`train.py`, `export.py`, `docs/TRAINING_EXPORT.md`, `notebooks/colab_final_training.ipynb`) | code ready; official training to be run in Colab |
+| Final training and export code (`train.py`, `export.py`, `docs/TRAINING_EXPORT.md`, `notebooks/colab_final_training.ipynb`) | done |
+| Final model trained in Colab (`models/`, run record in `docs/TRAINING_EXPORT.md` §10) | done; artifacts verified (commit `9a641d5`, seed 0, 2,924 TRAINING rows, weights SHA-256 `94e7ab93…`). Not yet tested on OPERATION |
 | Final test, quantization, ESP32 deployment, FL integration | not started |
 
 Colab (scikit-learn 1.6.1) and local (1.9.1) gave identical splits and features. The

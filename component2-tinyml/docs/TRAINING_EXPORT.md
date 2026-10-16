@@ -2,7 +2,7 @@
 
 Code: `src/tinyml/train.py`, `src/tinyml/export.py`. Script: `scripts/05_train_final.py`. Colab: `notebooks/colab_final_training.ipynb`. Tests: `tests/test_train_export.py`.
 
-**Status:** code ready. The official training run has **not** been done; it is run manually by Member 2 in Google Colab. No trained weights or results exist yet.
+**Status:** the official training run was done once by Member 2 in Google Colab on 2026-10-16. The exported files are in `models/`, unchanged and verified (section 10). The OPERATION final test has **not** been run.
 
 ## 1. What is trained
 
@@ -97,3 +97,27 @@ Until then the exported model is **layout-compatible only**. It has **not** been
 1. Push the reviewed code to `component2-tinyml`, because the notebook clones that branch.
 2. Open `notebooks/colab_final_training.ipynb` in Colab and run Steps 1–7 in order. Upload `pv_fault_dataset.csv` at Step 3.
 3. Download `final_model.zip` and send it back for review. The files are committed only after review and approval.
+
+## 10. Run record (official Colab training)
+
+The four files in `models/` are the unmodified Colab output. `manifest.json` holds their SHA-256 hashes, and `export.verify_artifacts("models")` checks them.
+
+| Item | Value |
+|---|---|
+| Training code commit | `9a641d5` (Add Final Model Training and Export Pipeline) |
+| Run | Google Colab, 2026-10-16T08:33:06Z (`training_metadata.json`) |
+| Environment | Python 3.13.16, numpy 2.1.3, pandas 2.2.3, scikit-learn 1.6.1 |
+| Dataset | `pv_fault_dataset.csv`, SHA-256 `5fbb93471c056c274cbf81e8c317934e379b2484013147e4c2cacfa93421595b`, split `runwise-v1` |
+| Training rows | TRAINING window only: 3,000 rows, 50 runs, sites A–F. 2,924 status-OK rows used. OPERATION not used (`operation_window_used: false`) |
+| Skipped readings | 76 `LUX_SATURATED` (49 from `SITE-E-DUS-17`, 27 from `SITE-E-PAR-05`), as in Phase 7 |
+| Rows per class used | NORMAL 600, PARTIAL_SHADING 573, DUST 551, OPEN_CIRCUIT 600, SHORT_CIRCUIT 600 |
+| Model | 8-16-5 tanh MLP, 229 parameters, seed 0; 142 of 2,000 iterations, converged, final loss 0.00494; no warnings |
+| V_ref | a = 2.52872, b = 0.09401, c = −0.01248 (fitted on 600 NORMAL TRAINING rows) |
+| Weights SHA-256 | `94e7ab9384a1906ec2cf0d3176b435e700f15cd99552fbc6c71519c648ecc3a7` |
+| Manifest file hashes | `model_contract.json` `752f6228…`, `feature_config.json` `421b5d4e…`, `training_metadata.json` `76389fc8…` |
+
+**Verification after download:** `verify_artifacts()` passed (file hashes, weights hash, label and feature order, 229-value layout, reference probes). Refitting V_ref and the scaler locally on the TRAINING rows gave the same values (largest difference about 1e-14). Inference from the contract alone, with NumPy and no scikit-learn, classified the same 2,924 rows and skipped the same 76.
+
+**Training accuracy caveat:** the training-fit accuracy is 1.0000, measured on the same rows the model was trained on. It only shows that the fit worked. **It is not a performance result** and must not be reported as one. The performance estimate is the Phase 7 run-wise cross-validation (pooled macro-F1 ≈ 0.98, `PHASE7_RESULTS.md`). The model's real test is the TRAINING → OPERATION final test, which has not been run yet.
+
+**Reference probe limitation:** the 5 reference probes are the first 5 status-OK TRAINING rows, which all come from one run (`SITE-A-PAR-11`), so all are PARTIAL_SHADING. They correctly check the forward pass, but a cross-check with another implementation (ESP32 C code, Member 3's FL, Member 4's twin) using only these probes would exercise one class. Probes covering every class are a possible later change; they are not changed in this run, so the committed contract stays exactly as exported.
