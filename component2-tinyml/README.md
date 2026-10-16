@@ -23,7 +23,8 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | Baseline comparison results (`docs/PHASE7_RESULTS.md`) | done; physics8 + 8-16-5 tanh MLP selected |
 | Final training and export code (`train.py`, `export.py`, `docs/TRAINING_EXPORT.md`, `notebooks/colab_final_training.ipynb`) | done |
 | Final model trained in Colab (`models/`, run record in `docs/TRAINING_EXPORT.md` §10) | done; artifacts verified (commit `9a641d5`, seed 0, 2,924 TRAINING rows, weights SHA-256 `94e7ab93…`). Not yet tested on OPERATION |
-| Final test, quantization, ESP32 deployment, FL integration | not started |
+| Independent OPERATION evaluation code and protocol (`holdout.py`, `docs/OPERATION_EVAL.md`, `notebooks/colab_operation_eval.ipynb`) | code ready; protocol fixed; OPERATION not yet evaluated |
+| Quantization, ESP32 deployment, FL integration | not started |
 
 Colab (scikit-learn 1.6.1) and local (1.9.1) gave identical splits and features. The
 scikit-learn-based `health_score` leakage score differed (0.6945 in Colab vs 0.7457 locally).
