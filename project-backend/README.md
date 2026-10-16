@@ -1,6 +1,6 @@
 # Project Backend: Solar PV IoT Ingestion & Time-Series Engine
 
-Robust, contract-governed ingestion pipeline and time-series query service for the Solar PV Monitoring Platform (J26-IT-348). Supports real-time MQTT telemetry, high-throughput batch HTTP ingestion, dynamic schema validation, and dashboard querying over **MongoDB Atlas**. Runs entirely natively on Windows without Docker.
+Robust, contract-governed ingestion pipeline and time-series query service for the Solar PV Monitoring Platform (J26-IT-348). Supports real-time MQTT telemetry, high-throughput batch HTTP ingestion, dynamic schema validation, and dashboard querying over **MongoDB Atlas**. Runs entirely natively on Windows. Docker is not used by this project.
 
 ---
 
@@ -65,7 +65,7 @@ flowchart TD
 | **Stage 2 Ingestion** | 21 tests verifying batched ingestion, MQTT message parser, type preservation, and HTTP limits. | **Verified (21 passed)** |
 | **Stage 3 Read API** | 45 tests verifying read authentication, injection protection, aggregation windows, replay, and verify tool. | **Verified (45 passed)** |
 | **Stage M1 MongoDB Engine** | 10 tests verifying storage factory, role accounts, BSON UTC datetimes, unique index upserts, HTTP 503 error mapping, and sanitized logging. | **Verified (10 passed)** |
-| **Full Unit Test Suite** | 97 passed unit tests running completely in-process without Docker or network dependencies. | **Verified (97 passed, 7 skipped)** |
+| **Full Unit Test Suite** | 108 passed unit tests running completely in-process without external network dependencies. | **Verified (108 passed, 1 skipped)** |
 
 ---
 
@@ -75,7 +75,6 @@ flowchart TD
 project-backend/
 ├── .env.example               # Environment template with MongoDB Atlas variables (no secrets)
 ├── .gitignore                 # Git ignore rules (includes .env, .dev-pids, rejects.jsonl)
-├── docker-compose.yml         # Legacy configuration (retained for reference; NOT used in M1)
 ├── pytest.ini                 # Pytest test discovery settings
 ├── requirements.txt           # Python dependencies (includes pymongo; influxdb-client removed)
 ├── schema.yaml                # Stream data contracts & reserved measurements definition
@@ -101,11 +100,13 @@ project-backend/
 │       └── verify_backend.py  # MongoDB row count and data contract verification tool
 ├── examples/                  # Canonical stream payloads (readings, health, prediction, twin)
 ├── handover/                  # Audience-specific handover documents (Members 1, 2, 3, 4)
+├── mosquitto/
+│   └── mosquitto.conf.example # Example configuration for native Mosquitto broker
 ├── reference/
 │   └── sites.csv              # Canonical pilot sites reference registry
 ├── scripts/
-│   ├── start_dev.ps1          # Starts native Mosquitto (if installed), MQTT service, and FastAPI
-│   └── stop_dev.ps1           # Stops dev processes cleanly by recorded PIDs (no Docker touched)
+│   ├── start_dev.ps1          # Starts MQTT service (if broker active) and FastAPI
+│   └── stop_dev.ps1           # Stops dev processes cleanly by recorded PIDs (Windows services untouched)
 └── tests/
     ├── conftest.py            # Global test fixtures and temporary rejects isolation
     ├── test_stage2.py         # Stage 2 ingestion, MQTT, HTTP, and pipeline unit tests
@@ -116,7 +117,7 @@ project-backend/
 
 ---
 
-## 4. Native Windows Setup & Start (Mosquitto & Docker Compose Fallback)
+## 4. Native Windows Setup & Start (Mosquitto Windows Service)
 
 ### Step 1: Python Virtual Environment
 Run the following in PowerShell from `project-backend/`:
@@ -149,24 +150,27 @@ Tests run in-process with mocks and data fixtures without requiring external ser
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
-*Expected: 106 passed, 1 skipped (gated live integration test).*
+*Expected: 108 passed, 1 skipped (gated live integration test).*
 
-### Step 4: Mosquitto MQTT Broker
-`scripts/start_dev.ps1` automatically checks for a native Mosquitto installation at `C:\Program Files\mosquitto\mosquitto.exe`:
-- **If native Mosquitto exists**: Starts native broker process with `mosquitto/mosquitto.conf` and logs PID to `.dev-pids`.
-- **If native Mosquitto is missing**: Automatically starts Mosquitto container via `docker compose -f docker-compose.yml up -d` as a seamless fallback, recording a `.dev-docker` marker.
+### Step 4: Mosquitto MQTT Broker (Windows Service)
+For MQTT ingestion, install Eclipse Mosquitto for Windows (e.g. from https://mosquitto.org/download/ or via Windows installer). Run Mosquitto as a Windows service listening on `127.0.0.1:1883` with anonymous access allowed for local development (see [mosquitto.conf.example](file:///d:/Research-project/J26-IT-348/project-backend/mosquitto/mosquitto.conf.example)).
+
+`scripts/start_dev.ps1` and `replay.py` verify the MQTT broker with `Test-NetConnection 127.0.0.1 -Port 1883` (the IPv4 address, not `localhost`, because the broker listens on `127.0.0.1` only):
+- **If broker is listening on 127.0.0.1:1883**: `start_dev.ps1` starts the background MQTT ingest service and prints `Mosquitto Broker: 127.0.0.1:1883 (Windows service)`.
+- **If broker is not listening**: `start_dev.ps1` prints `MQTT broker not found: install Mosquitto for Windows (see README). Continuing with HTTP only.` and skips MQTT ingest (exiting 0; HTTP ingestion remains fully operational).
+- `start_dev.ps1` and `stop_dev.ps1` never start, stop, or modify Windows services or Mosquitto.
 
 ### Step 5: Launch Dev Services
 ```powershell
 .\scripts\start_dev.ps1
 ```
-*Starts broker, background MQTT service, and FastAPI server. Records PIDs in `.dev-pids` and polls `/health`.*
+*Launches MQTT ingest service (if broker active) and FastAPI server. Records PIDs in `.dev-pids` and polls `/health`.*
 
 To stop all services:
 ```powershell
 .\scripts\stop_dev.ps1
 ```
-*Stops ONLY the PIDs listed in `.dev-pids` and their descendant processes (found through `ParentProcessId`). If Docker Compose started the Mosquitto container, it runs `docker compose stop`. Never selects processes by name and never touches Windows services, other containers, or volumes.*
+*Stops ONLY the PIDs listed in `.dev-pids` and their descendant processes (found through `ParentProcessId`). Never selects processes by name and never touches Windows services or other system processes.*
 
 ---
 
@@ -278,7 +282,7 @@ To verify that your MongoDB Atlas cluster is reachable from Windows without logg
   - Implemented batch chunking (`MONGO_WRITE_BATCH`, default 100), pause (`MONGO_WRITE_PAUSE_S`), and exponential backoff retry on transient errors in `MongoWriter`.
   - Added throughput reporting (rows/s) and estimated duration calculation in `replay.py`.
   - Updated `/health` endpoint to return `{"status": "ok"|"degraded", "storage": "mongodb", "connected": bool, "counters": {...}}` and removed legacy `*_connected` flags.
-  - Updated dev scripts: `start_dev.ps1` supports native Mosquitto or Docker Compose fallback with `.dev-pids` tracking; `stop_dev.ps1` stops strictly by PID and `ParentProcessId` process tree.
+  - Updated dev scripts: `start_dev.ps1` checks `127.0.0.1:1883` and starts MQTT service conditionally with `.dev-pids` tracking; `stop_dev.ps1` stops strictly by PID and `ParentProcessId` process tree.
   - Added dataset resolution in tests across `PV_DATASET` env var, `..\pv_fault_dataset.csv`, and `..\component3-federated-backend\data\shared\pv_fault_dataset.csv`.
-  - Full test suite passing: 106 passed, 1 skipped.
+  - Full test suite passing: 108 passed, 1 skipped.
 

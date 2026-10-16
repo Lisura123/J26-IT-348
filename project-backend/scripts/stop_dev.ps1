@@ -1,7 +1,6 @@
 # stop_dev.ps1 - Stops development services started by start_dev.ps1
 # Stops ONLY the PIDs listed in .dev-pids and their descendant processes via ParentProcessId.
-# Plus 'docker compose stop' for this compose file if it started the container.
-# NEVER selects processes by name. Never touches Windows services, other containers or volumes.
+# NEVER selects processes by name. Never touches Windows services or other processes.
 
 $ErrorActionPreference = "SilentlyContinue"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -55,16 +54,6 @@ if (Test-Path $pidFile) {
     Write-Host "  Removed $pidFile."
 } else {
     Write-Host "  No .dev-pids file found."
-}
-
-# 2. If docker compose was started by start_dev.ps1, run 'docker compose stop' for this compose file
-$dockerMarker = Join-Path $projectRoot ".dev-docker"
-if (Test-Path $dockerMarker) {
-    $composeFile = Join-Path $projectRoot "docker-compose.yml"
-    Write-Host "  Stopping container started via docker compose..." -ForegroundColor Cyan
-    docker compose -f "$composeFile" stop
-    Remove-Item -Path $dockerMarker -Force -ErrorAction SilentlyContinue
-    Write-Host "  Stopped docker-compose service and removed marker."
 }
 
 Write-Host "`n=== Dev Services Stopped Cleanly ===" -ForegroundColor Green

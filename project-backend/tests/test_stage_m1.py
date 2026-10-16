@@ -1,5 +1,5 @@
-"""Unit tests for Stage M1: MongoDB Atlas Migration (No Docker).
-Tests run 100% in-process with mocks and fake clients, without Docker or live Atlas.
+"""Unit tests for Stage M1: MongoDB Atlas Migration.
+Tests run 100% in-process with mocks and fake clients, without live Atlas.
 Tests all requirements:
   - Storage factory and role-based credential selection.
   - Document shape and UTC conversion.
@@ -482,8 +482,60 @@ def test_mongo_writer_transient_retry_exhausted():
     assert mock_col.bulk_write.call_count == 4
 
 
+
 # ============================================================================
-# 11. INTEGRATION TEST GATING (RUN_INTEGRATION_MONGO=1 ONLY)
+# 11. MQTT BROKER TEST-NETCONNECTION CHECKS (IPv4 127.0.0.1)
+# ============================================================================
+
+def test_check_mqtt_broker_normalizes_to_ipv4(monkeypatch):
+    """check_mqtt_broker maps 'localhost' and '::1' to IPv4 '127.0.0.1' for Test-NetConnection."""
+    from backend.tools.replay import check_mqtt_broker
+    import subprocess
+    import sys
+
+    captured_commands = []
+    def fake_subprocess_run(cmd, *args, **kwargs):
+        captured_commands.append(cmd)
+        class Res:
+            returncode = 0
+            stdout = "True\n"
+        return Res()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert check_mqtt_broker("localhost", 1883) is True
+    assert len(captured_commands) == 1
+    full_cmd = " ".join(captured_commands[0])
+    assert "127.0.0.1" in full_cmd
+    assert "-Port 1883" in full_cmd
+    assert "localhost" not in full_cmd
+
+
+def test_run_mqtt_replay_broker_unreachable_exits_nonzero(monkeypatch, capsys):
+    """run_mqtt_replay aborts with sys.exit(1) if broker check fails."""
+    from backend.tools.replay import run_mqtt_replay
+
+    monkeypatch.setattr("backend.tools.replay.check_mqtt_broker", lambda *a, **k: False)
+
+    records = [{"record_id": "R1", "timestamp_utc": "2026-09-10T10:00:00Z", "site_id": "SITE-A"}]
+    with pytest.raises(SystemExit) as exc:
+        run_mqtt_replay(
+            records=records,
+            stream="readings",
+            mqtt_host="127.0.0.1",
+            mqtt_port=1883,
+            batch_size=10,
+            speed=0,
+        )
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "MQTT broker unreachable at 127.0.0.1:1883" in captured.err
+    assert "Test-NetConnection 127.0.0.1 -Port 1883 failed" in captured.err
+
+
+# ============================================================================
+# 12. INTEGRATION TEST GATING (RUN_INTEGRATION_MONGO=1 ONLY)
 # ============================================================================
 
 @pytest.mark.skipif(

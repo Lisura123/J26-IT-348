@@ -14,6 +14,8 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import socket
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -284,6 +286,35 @@ def run_http_replay(
         sys.exit(1)
 
 
+def check_mqtt_broker(host: str = "127.0.0.1", port: int = 1883, timeout: float = 5.0) -> bool:
+    """Checks whether the MQTT broker is reachable on host:port.
+    Uses 'Test-NetConnection 127.0.0.1 -Port 1883' (IPv4 address, not 'localhost') on Windows.
+    Falls back to a standard socket connection check.
+    """
+    check_host = "127.0.0.1" if host in ("localhost", "::1") else host
+    if sys.platform == "win32":
+        try:
+            cmd = [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"(Test-NetConnection {check_host} -Port {port} -WarningAction SilentlyContinue).TcpTestSucceeded",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            if res.returncode == 0 and "True" in res.stdout:
+                return True
+            return False
+        except Exception:
+            pass
+
+    # Socket fallback (cross-platform or if powershell invocation fails)
+    try:
+        with socket.create_connection((check_host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def run_mqtt_replay(
     records: List[Dict[str, Any]],
     stream: str,
@@ -292,8 +323,24 @@ def run_mqtt_replay(
     batch_size: int,
     speed: float,
     file_path: Optional[Path] = None,
+    check_broker: bool = True,
 ) -> None:
     """Publishes records via MQTT with QoS 1 and speed control."""
+    if mqtt_host in ("localhost", "::1"):
+        mqtt_host = "127.0.0.1"
+
+    if check_broker:
+        print(f"\n[MQTT] Checking MQTT broker at {mqtt_host}:{mqtt_port} with Test-NetConnection {mqtt_host} -Port {mqtt_port}...")
+        if not check_mqtt_broker(mqtt_host, mqtt_port):
+            print(
+                f"Error: MQTT broker unreachable at {mqtt_host}:{mqtt_port} "
+                f"(Test-NetConnection {mqtt_host} -Port {mqtt_port} failed). "
+                f"Ensure Mosquitto is running on 127.0.0.1:1883.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"  [OK] MQTT broker is active on {mqtt_host}:{mqtt_port}.")
+
     client_id = f"replay-{stream}-{os.getpid()}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     print(f"\n[MQTT] Connecting to broker at {mqtt_host}:{mqtt_port}...")
@@ -380,7 +427,9 @@ def main():
     # Network args
     parser.add_argument("--api-url", default=os.environ.get("API_URL", "http://localhost:8000"))
     parser.add_argument("--api-key", default=os.environ.get("API_KEY", ""))
-    parser.add_argument("--mqtt-host", default=os.environ.get("MQTT_HOST", "localhost"))
+    raw_mqtt_host = os.environ.get("MQTT_HOST", "127.0.0.1")
+    default_mqtt_host = "127.0.0.1" if raw_mqtt_host in ("localhost", "::1") else raw_mqtt_host
+    parser.add_argument("--mqtt-host", default=default_mqtt_host)
     parser.add_argument("--mqtt-port", type=int, default=int(os.environ.get("MQTT_PORT", 1883)))
 
     args = parser.parse_args()
@@ -434,10 +483,11 @@ def main():
             speed=args.speed,
         )
     elif args.transport == "mqtt":
+        target_mqtt_host = "127.0.0.1" if args.mqtt_host in ("localhost", "::1") else args.mqtt_host
         run_mqtt_replay(
             records=records,
             stream=args.stream,
-            mqtt_host=args.mqtt_host,
+            mqtt_host=target_mqtt_host,
             mqtt_port=args.mqtt_port,
             batch_size=args.batch_size,
             speed=args.speed,

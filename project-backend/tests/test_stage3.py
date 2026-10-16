@@ -1,5 +1,5 @@
 """Unit tests for Stage 3: Read API, Replay Tool, Verify Tool.
-Tests run purely in-process with FakeReader (no Docker or external services required).
+Tests run purely in-process with FakeReader (no external services required).
 """
 from datetime import datetime, timezone
 import json
@@ -779,6 +779,7 @@ def test_replay_mqtt_reminder_printed(monkeypatch, capsys):
 
     monkeypatch.setattr("paho.mqtt.client.Client", FakeMQTTClient)
     monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr("backend.tools.replay.check_mqtt_broker", lambda *a, **k: True)
 
     records = [
         {"record_id": "R1", "timestamp_utc": "2026-09-10T10:00:00Z", "site_id": "SITE-A"}

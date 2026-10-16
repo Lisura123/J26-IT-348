@@ -1,6 +1,6 @@
-# start_dev.ps1 - Starts native local development services for project-backend (No Docker)
+# start_dev.ps1 - Starts native local development services for project-backend
 # 1. Verifies .env variable names (without printing values or exposing secrets)
-# 2. Checks for native Mosquitto executable; starts broker natively if found or guides installation
+# 2. Checks Mosquitto MQTT broker on 127.0.0.1:1883
 # 3. Launches MQTT ingest service (if broker available) and FastAPI server
 # 4. Records PIDs in .dev-pids and polls /health up to 45 seconds until ready
 
@@ -9,7 +9,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 Set-Location $projectRoot
 
-Write-Host "=== Starting Project Backend Native Dev Environment (No Docker) ===" -ForegroundColor Cyan
+Write-Host "=== Starting Project Backend Native Dev Environment ===" -ForegroundColor Cyan
 
 # 1. Check required .env variable names
 $envFile = Join-Path $projectRoot ".env"
@@ -58,28 +58,21 @@ if ($missing.Count -gt 0) {
     exit 1
 }
 
-# 2. Check for Mosquitto broker (Native or Docker Compose fallback)
+# 2. Check Mosquitto MQTT broker on 127.0.0.1:1883
 Write-Host "`nChecking Mosquitto MQTT broker..." -ForegroundColor Cyan
-$nativeMosquitto = "C:\Program Files\mosquitto\mosquitto.exe"
-$startedDocker = $false
-
 $pids = @()
 
-if (Test-Path $nativeMosquitto) {
-    Write-Host "  Found native Mosquitto: $nativeMosquitto" -ForegroundColor Green
-    $confFile = Join-Path $projectRoot "mosquitto\mosquitto.conf"
-    $mosqProc = Start-Process -FilePath $nativeMosquitto -ArgumentList "-c `"$confFile`"" -PassThru
-    $pids += $mosqProc.Id
-    Write-Host "  Started native Mosquitto broker (PID: $($mosqProc.Id))"
-} else {
-    Write-Host "  Native Mosquitto not found at $nativeMosquitto." -ForegroundColor Yellow
-    Write-Host "  Starting Mosquitto broker container via docker compose..." -ForegroundColor Yellow
-    $composeFile = Join-Path $projectRoot "docker-compose.yml"
-    docker compose -f "$composeFile" up -d
-    $startedDocker = $true
-    $dockerMarker = Join-Path $projectRoot ".dev-docker"
-    "docker-compose-started" | Out-File -FilePath $dockerMarker -Encoding ascii
-    Write-Host "  Started Mosquitto broker container via docker compose." -ForegroundColor Green
+$mqttOnline = $false
+try {
+    $connTest = Test-NetConnection 127.0.0.1 -Port 1883 -WarningAction SilentlyContinue
+    if ($connTest.TcpTestSucceeded) {
+        $mqttOnline = $true
+        Write-Host "  [OK] Mosquitto broker active on 127.0.0.1:1883." -ForegroundColor Green
+    }
+} catch {}
+
+if (-not $mqttOnline) {
+    Write-Host "MQTT broker not found: install Mosquitto for Windows (see README). Continuing with HTTP only." -ForegroundColor Yellow
 }
 
 # 3. Determine Python executable
@@ -91,10 +84,14 @@ if (-not (Test-Path $pythonExe)) {
 # 4. Launch background services
 Write-Host "`nLaunching background services..." -ForegroundColor Cyan
 
-# Start MQTT Ingest Service
-$mqttProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot'; & '$pythonExe' -m backend.ingest.mqtt_service" -PassThru
-$pids += $mqttProc.Id
-Write-Host "  Started MQTT Ingest Service (PID: $($mqttProc.Id))"
+# Start MQTT Ingest Service (if broker is available)
+if ($mqttOnline) {
+    $mqttProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot'; & '$pythonExe' -m backend.ingest.mqtt_service" -PassThru
+    $pids += $mqttProc.Id
+    Write-Host "  Started MQTT Ingest Service (PID: $($mqttProc.Id))"
+} else {
+    Write-Host "  Skipping MQTT Ingest Service (broker not running)." -ForegroundColor Yellow
+}
 
 # Start FastAPI Server
 $apiProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot'; & '$pythonExe' -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000" -PassThru
@@ -158,9 +155,9 @@ Write-Host "`n=== Development Services Ready ===" -ForegroundColor Green
 Write-Host "  Health Status:    http://localhost:8000/health"
 Write-Host "  Swagger UI Docs:  http://localhost:8000/docs"
 Write-Host "  Query API:        http://localhost:8000/api/v1"
-if (Test-Path $nativeMosquitto) {
-    Write-Host "  Mosquitto Broker: localhost:1883 (Native Windows Process)"
+if ($mqttOnline) {
+    Write-Host "  Mosquitto Broker: 127.0.0.1:1883 (Windows service)"
 } else {
-    Write-Host "  Mosquitto Broker: localhost:1883 (Docker Container)"
+    Write-Host "  MQTT:             not running (HTTP only)"
 }
 Write-Host "`nTo stop all services started by this script, run .\scripts\stop_dev.ps1"

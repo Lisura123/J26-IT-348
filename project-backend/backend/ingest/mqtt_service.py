@@ -181,7 +181,8 @@ class MqttIngestService:
     ) -> None:
         verify_startup_safety()
 
-        self.host = host or os.environ.get("MQTT_HOST", "localhost")
+        raw_host = host or os.environ.get("MQTT_HOST", "127.0.0.1")
+        self.host = "127.0.0.1" if raw_host in ("localhost", "::1") else raw_host
         self.port = int(port or os.environ.get("MQTT_PORT", 1883))
         self.client_id = client_id or os.environ.get("MQTT_CLIENT_ID", "solar-ingest")
 

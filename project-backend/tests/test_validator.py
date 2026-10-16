@@ -1,5 +1,5 @@
 """Test suite for project-backend validation and data contract rules.
-No Docker, pure Python tests.
+Pure Python in-process tests.
 """
 from datetime import datetime, timezone
 import os

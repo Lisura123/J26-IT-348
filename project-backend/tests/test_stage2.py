@@ -1,5 +1,5 @@
 """Unit and functional tests for Stage 2: InfluxWriter, Ingest Pipeline, MQTT Service, and HTTP API.
-No Docker or external network connection required.
+Pure in-process tests; no external network connection required.
 """
 from datetime import datetime, timezone
 import json
