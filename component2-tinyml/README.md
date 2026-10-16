@@ -20,7 +20,9 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | PV feature layer (`src/tinyml/features.py`, `docs/FEATURES.md`) | done; not yet evaluated |
 | Google Colab environment check (`notebooks/colab_train.ipynb`, `results/colab_env_check.json`) | done; run in Colab, 91 tests passed |
 | Phase 7 baseline comparison code (`experiment.py`, `docs/BASELINES.md`, `notebooks/colab_phase7_baselines.ipynb`) | code ready; experiments to be run in Colab |
-| Final model training, quantization, ESP32 deployment | not started |
+| Baseline comparison results (`docs/PHASE7_RESULTS.md`) | done; physics8 + 8-16-5 tanh MLP selected |
+| Final training and export code (`train.py`, `export.py`, `docs/TRAINING_EXPORT.md`, `notebooks/colab_final_training.ipynb`) | code ready; official training to be run in Colab |
+| Final test, quantization, ESP32 deployment, FL integration | not started |
 
 Colab (scikit-learn 1.6.1) and local (1.9.1) gave identical splits and features. The
 scikit-learn-based `health_score` leakage score differed (0.6945 in Colab vs 0.7457 locally).
