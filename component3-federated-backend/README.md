@@ -17,7 +17,7 @@ flowchart LR
   C --> D["Network replay: outages, duty cycle, fragments, retries"]
   D --> E["Backend aggregation: weight = samples x staleness x fairness, late updates kept"]
   E --> G["Global model JSON in models/"]
-  E --> H[("InfluxDB solar_pv: fl_global_models, fl_client_updates, fl_site_state")]
+  E --> H[("MongoDB Atlas solar_pv: fl_global_models, fl_client_updates, fl_site_state")]
   H --> I["Members 2 and 4, dashboard"]
 ```
 
@@ -26,7 +26,7 @@ flowchart LR
 | Step | Files |
 |---|---|
 | 1 Data loader | `src/data_loader.py` |
-| 2 InfluxDB schema and loader | `docker-compose.yml`, `src/load_to_influx.py`, `src/verify_influx.py` |
+| 2 MongoDB Atlas schema and loader | `src/mongo_client.py`, `src/load_to_mongo.py`, `src/verify_mongo.py` |
 | 3 FedAvg rebuilt from shared files | `src/fedavg_baseline.py` |
 | 4 Network replay, validated against the shared trace | `src/network_replay.py`, `src/validate_replay.py` |
 | 5 FedAvg baseline (Flower `NumPyClient` sites) | `src/fl_baseline.py`, `src/mlp.py`, `src/pv_data.py` |
@@ -34,7 +34,7 @@ flowchart LR
 | 7 Reliability-aware scheduler | `src/scheduler.py` |
 | 8 Asynchronous aggregation, staleness and fairness weights | `src/engine.py` |
 | 9 Scenarios, evaluation, ablation | `src/scenarios.py`, `src/evaluate.py`, `src/paired.py` |
-| 10 Results in the shared format and InfluxDB | `src/export_results.py` |
+| 10 Results in the shared format and MongoDB Atlas | `src/export_results.py` |
 
 ### Results (5 seeds, mean ± standard deviation)
 | | Normal trace: baseline | Normal trace: full | Harsh: baseline | Harsh: full |
@@ -50,21 +50,22 @@ are offline when a round opens, so fewer updates are aggregated under harsh cond
 
 ### Reproduce
 
+InfluxDB and Docker are no longer used (the git tag pp1 has the old version).
+
 ```powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env        # fill in the values
-docker compose up -d
-python -m src.load_to_influx
-python -m src.verify_influx
+python -m src.load_to_mongo
+python -m src.verify_mongo
 python -m src.fedavg_baseline
 python -m src.validate_replay
 python -m src.evaluate --scenario trace --seeds 5
 python -m src.evaluate --scenario harsh --seeds 5 --ablation
 python -m src.paired --scenario harsh
 python -m src.make_charts
-python -m src.export_results --config full --scenario trace --influx
+python -m src.export_results --config full --scenario trace --mongo
 ```
 
 ### Honest notes

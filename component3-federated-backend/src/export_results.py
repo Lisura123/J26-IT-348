@@ -1,4 +1,4 @@
-"""Step 10: export one run in the shared file formats and (optionally) write it to InfluxDB."""
+"""Step 10: export one run in the shared file formats and (optionally) write it to MongoDB Atlas."""
 import argparse
 import json
 import time
@@ -46,40 +46,35 @@ def as_contract(df):
             df[c] = df[c].map(z)
     return df
 
-def influx_counts(run_id, expected):
-    from src.load_to_influx import client, ORG, BUCKET
-    q = client.query_api()
-    for meas, field, n in expected:
-        flux = f'''from(bucket: "{BUCKET}")
-          |> range(start: 2026-09-01T00:00:00Z, stop: 2026-09-20T00:00:00Z)
-          |> filter(fn: (r) => r._measurement == "{meas}" and r._field == "{field}" and r.run_id == "{run_id}")
-          |> group() |> count()'''
-        t = q.query(flux)
-        got = t[0].records[0].get_value() if t and t[0].records else 0
-        print(f"  {meas:18s} influx={got:5d} file={n:5d}  {'OK' if got == n else 'MISMATCH'}")
+def mongo_counts(run_id, expected):
+    from src.mongo_client import get_mongo_client, get_mongo_db
+    client = get_mongo_client()
+    db = get_mongo_db(client)
+    for coll_name, n in expected:
+        got = db[coll_name].count_documents({"run_id": run_id})
+        print(f"  {coll_name:18s} mongo={got:5d} file={n:5d}  {'OK' if got == n else 'MISMATCH'}")
 
-def write_influx(glob, upd, state, run_id, delay):
-    from src.load_to_influx import write_df
+def write_mongo(glob, upd, state, run_id, delay):
+    from src.mongo_client import get_mongo_client, get_mongo_db, row_to_document, write_documents
+    client = get_mongo_client()
+    db = get_mongo_db(client)
+
     glob = glob.assign(published_at_utc=pd.to_datetime(glob.published_at_utc, utc=True, format="ISO8601"))
     for r in sorted(glob.round_id.unique()):                 # one round at a time, like a live run
-        write_df(glob[glob.round_id == r], "fl_global_models", "published_at_utc",
-                 ["aggregation", "compression_method", "run_id"],
-                 ["round_id", "global_model_version", "clients_selected", "clients_received", "clients_late",
-                  "clients_failed", "total_samples", "global_val_loss", "global_val_accuracy",
-                  "mean_update_l2_norm", "model_size_int8_bytes", "model_path"])
+        g_round = glob[glob.round_id == r]
+        g_docs = [row_to_document(row) for row in g_round[GLOBAL_COLS].to_dict("records")]
+        write_documents(db["fl_global_models"], "fl_global_models", g_docs)
+
         u = upd[upd.round_id == r]
         if len(u):
-            write_df(u, "fl_client_updates", "sent_at_utc",
-                     ["site_id", "device_id", "protocol", "status", "compression_method", "run_id"],
-                     ["update_id", "round_id", "base_model_version", "num_samples", "local_loss_before",
-                      "local_loss_after", "local_accuracy_before", "local_accuracy_after", "delta_l2_norm",
-                      "payload_bytes", "fragments", "retries", "airtime_s", "duty_cycle_wait_s",
-                      "transfer_duration_s", "radio_energy_mj", "staleness", "reliability_score",
-                      "aggregation_weight"])
+            u_docs = [row_to_document(row) for row in u[UPDATE_COLS].to_dict("records")]
+            write_documents(db["fl_client_updates"], "fl_client_updates", u_docs)
+
         s = state[state.round_id == r] if len(state) else state
         if len(s):
-            write_df(s, "fl_site_state", "round_opened_utc", ["site_id", "device_id", "protocol", "run_id"],
-                     ["reliability", "expected_upload_s", "age", "participation", "selected"])
+            s_docs = [row_to_document(row) for row in s[STATE_COLS].to_dict("records")]
+            write_documents(db["fl_site_state"], "fl_site_state", s_docs)
+
         if delay:
             time.sleep(delay)
 
@@ -89,8 +84,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--activation", default="tanh", choices=["relu", "tanh", "sigmoid"])
     ap.add_argument("--scenario", default="trace", choices=["trace", "stochastic", "harsh"])
-    ap.add_argument("--influx", action="store_true", help="also write to InfluxDB")
-    ap.add_argument("--delay", type=float, default=0.0, help="seconds between rounds when writing to InfluxDB")
+    ap.add_argument("--mongo", action="store_true", help="also write to MongoDB Atlas")
+    ap.add_argument("--delay", type=float, default=0.0, help="seconds between rounds when writing to MongoDB Atlas")
     a = ap.parse_args()
 
     run_id = f"member3-{a.config}-{a.activation}-s{a.seed}-{a.scenario}"
@@ -98,7 +93,7 @@ def main():
     out = RESULTS_DIR / "export" / run_id
     out.mkdir(parents=True, exist_ok=True)
 
-    # model weights stay as JSON files; only the path goes into the tables / InfluxDB
+    # model weights stay as JSON files; only the path goes into the tables / MongoDB Atlas
     model_dir = ROOT / "models" / "runs" / run_id
     model_dir.mkdir(parents=True, exist_ok=True)
     for ver, weights in df.attrs["models"].items():
@@ -127,12 +122,12 @@ def main():
     print(f"  fl_site_state.csv    : {len(state)} rows")
     print(f"  model files          : {len(df.attrs['models'])} in {model_dir}")
 
-    if a.influx:
-        print("writing to InfluxDB ...")
-        write_influx(glob, upd, state, run_id, a.delay)
-        influx_counts(run_id, [("fl_global_models", "round_id", len(glob)),
-                               ("fl_client_updates", "round_id", len(upd)),
-                               ("fl_site_state", "reliability", len(state))])
+    if a.mongo:
+        print("writing to MongoDB Atlas ...")
+        write_mongo(glob, upd, state, run_id, a.delay)
+        mongo_counts(run_id, [("fl_global_models", len(glob)),
+                              ("fl_client_updates", len(upd)),
+                              ("fl_site_state", len(state))])
 
 if __name__ == "__main__":
     main()
