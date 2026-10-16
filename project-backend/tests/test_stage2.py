@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend.api.main import app
 from backend.config import get_final_measurement, load_schema, verify_startup_safety
-from backend.influx_writer import InfluxWriter
+from backend.mongo_writer import MongoWriter, point_to_document
 from backend.ingest.mqtt_service import handle_message
 from backend.ingest.pipeline import process_records, reset_counters
 from backend.ingest.rejects import REJECTS_FILE, log_reject
@@ -144,7 +144,11 @@ def test_http_api_health():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["influx_connected"] is True
+    assert data["storage"] == "mongodb"
+    assert data["connected"] is True
+    assert "influx_connected" not in data
+    assert "mongo_connected" not in data
+    assert "database_connected" not in data
     assert "counters" in data
 
 
@@ -278,7 +282,6 @@ def test_mqtt_handle_message_too_large():
 # =========================================================================
 
 def test_writer_preserves_exact_field_types():
-    from influxdb_client import Point, WritePrecision
     pt = PointSpec(
         measurement="test_sensor_readings",
         time=datetime(2026, 9, 10, 7, 26, 0, tzinfo=timezone.utc),
@@ -292,26 +295,20 @@ def test_writer_preserves_exact_field_types():
         },
     )
 
-    p = Point(pt.measurement).time(pt.time, WritePrecision.MS)
-    for k, v in pt.tags.items():
-        p.tag(k, str(v))
-    for k, v in pt.fields.items():
-        if isinstance(v, bool):
-            p.field(k, v)
-        elif isinstance(v, float):
-            p.field(k, float(v))
-        elif isinstance(v, int):
-            p.field(k, int(v))
-        else:
-            p.field(k, str(v))
-
-    lp = p.to_line_protocol()
-    # Verify line protocol structure
-    assert "current_ma=70.0" in lp or "current_ma=70" in lp
-    assert "reading=10i" in lp          # Influx integers have 'i'
-    assert "is_active=true" in lp       # Influx booleans are lowercase true
-    assert 'record_id="REC-01"' in lp   # Influx strings are quoted
-    assert "site_id=SITE-A" in lp       # Tag
+    doc = point_to_document(pt)
+    # Verify exact types in MongoDB document
+    assert isinstance(doc["voltage_v"], float)
+    assert doc["voltage_v"] == 2.27
+    assert isinstance(doc["current_ma"], float)
+    assert doc["current_ma"] == 70.0
+    assert isinstance(doc["reading"], int)
+    assert doc["reading"] == 10
+    assert isinstance(doc["is_active"], bool)
+    assert doc["is_active"] is True
+    assert isinstance(doc["record_id"], str)
+    assert doc["record_id"] == "REC-01"
+    assert doc["site_id"] == "SITE-A"
+    assert doc["timestamp_utc"] == datetime(2026, 9, 10, 7, 26, 0, tzinfo=timezone.utc)
 
 
 # =========================================================================
@@ -367,16 +364,4 @@ def test_secrets_never_appear_in_reject_log(tmp_path, monkeypatch):
     assert "***" in content
 
 
-# =========================================================================
-# 7. Integration Test (Skipped unless RUN_INTEGRATION=1)
-# =========================================================================
 
-@pytest.mark.skipif(
-    os.environ.get("RUN_INTEGRATION") != "1",
-    reason="Integration test skipped unless RUN_INTEGRATION=1",
-)
-def test_influx_live_connection():
-    writer = InfluxWriter.from_env()
-    assert writer.ping() is True
-    cnt = writer.count_points("network_link_metrics")
-    assert isinstance(cnt, int)

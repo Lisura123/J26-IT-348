@@ -1,6 +1,6 @@
 """Backend verification tool for project-backend.
-Compares expected valid rows from input CSV against distinct (site_id, _time)
-rows found in InfluxDB, protecting reserved measurements.
+Compares expected valid rows from input CSV against distinct (site_id, timestamp_utc)
+documents found in MongoDB, protecting reserved measurements.
 
 Usage:
     python -m backend.tools.verify_backend --stream readings --file ../pv_fault_dataset.csv --window OPERATION --site SITE-C
@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional, Set
 from dotenv import load_dotenv
 
 from backend.config import get_final_measurement, get_reserved_measurements, load_schema
-from backend.influx_reader import InfluxReader, ReadError
+from backend.mongo_reader import MongoReader, ReadError
+from backend.storage import sanitize_error
 from backend.tools.replay import load_and_filter_records
 from backend.validate import parse_utc_timestamp, validate_record
 
@@ -33,7 +34,7 @@ def verify_dataset(
     reader: Optional[Any] = None,
 ) -> int:
     """Performs verification of expected vs found rows.
-    Returns 0 on OK, 1 on MISMATCH, 2 on InfluxDB ReadError.
+    Returns 0 on OK, 1 on MISMATCH, 2 on MongoDB ReadError.
     """
     load_schema()
     target_measurement = get_final_measurement(stream)
@@ -73,10 +74,10 @@ def verify_dataset(
         dt_stop = None
         filter_sites = sites or []
 
-    # 3. Found = distinct (site_id, _time) rows in InfluxDB
-    active_reader = reader or InfluxReader.from_env()
-
+    # 3. Found = distinct (site_id, timestamp_utc) documents in MongoDB
     try:
+        active_reader = reader or MongoReader.from_env()
+
         found = active_reader.count_distinct_rows(
             stream=stream,
             sites=filter_sites,
@@ -97,8 +98,8 @@ def verify_dataset(
         for m in reserved_measurements:
             reserved_counts[m] = active_reader.count_field_values(m)
 
-    except ReadError as e:
-        print(f"CANNOT READ INFLUXDB: {e}")
+    except (ReadError, Exception) as e:
+        print(f"CANNOT READ MONGODB: {sanitize_error(e)}")
         return 2
 
     print("=== Backend Verification ===")
@@ -136,7 +137,7 @@ def verify_dataset(
         cnt = reserved_counts.get(m, 0)
         print(f"  [Reserved] {m:22s} : {cnt:6d} field values")
 
-    print("\nNote: InfluxDB points sharing the same series (measurement + tags) and timestamp overwrite each other.")
+    print("\nNote: MongoDB documents sharing the same unique key (site_id, timestamp_utc) overwrite each other.")
 
     return 0 if is_ok else 1
 

@@ -1,12 +1,12 @@
 """Shared ingestion pipeline for MQTT and HTTP transports.
-Validates records against the data contract, logs rejects, and batches writes to InfluxDB.
+Validates records against the data contract, logs rejects, and batches writes to MongoDB.
 Maintains thread-safe counters.
 """
 from collections import Counter
 import threading
 from typing import Any, Dict, List, Optional
 
-from backend.influx_writer import InfluxWriter
+from backend.mongo_writer import MongoWriter
 from backend.ingest.rejects import log_reject
 from backend.points import PointSpec
 from backend.validate import REJECT_TOPIC_MISMATCH, validate_record
@@ -20,14 +20,14 @@ _COUNTERS = {
     "write_failed": 0,
 }
 
-_DEFAULT_WRITER: Optional[InfluxWriter] = None
+_DEFAULT_WRITER: Optional[MongoWriter] = None
 
 
-def get_default_writer() -> InfluxWriter:
-    """Returns a shared InfluxWriter instance or creates one."""
+def get_default_writer() -> MongoWriter:
+    """Returns a shared MongoWriter instance or creates one."""
     global _DEFAULT_WRITER
     if _DEFAULT_WRITER is None:
-        _DEFAULT_WRITER = InfluxWriter.from_env()
+        _DEFAULT_WRITER = MongoWriter.from_env()
     return _DEFAULT_WRITER
 
 
@@ -55,7 +55,7 @@ def process_records(
     """Processes a batch of records from MQTT or HTTP.
     1. Validates records with data contract.
     2. Rejects mismatched topic site_id with TOPIC_MISMATCH.
-    3. Batches accepted points to InfluxDB writer.
+    3. Batches accepted points to MongoDB writer.
     4. Logs rejections to rejects.jsonl.
     5. Updates thread-safe counters.
 
@@ -126,7 +126,7 @@ def process_records(
             batch_accepted += 1
             valid_points.append(res.point)
 
-    # Batch write valid points to InfluxDB
+    # Batch write valid points to MongoDB
     if valid_points:
         w_cnt, f_cnt, err_txt = active_writer.write(valid_points)
         batch_written = w_cnt
@@ -138,7 +138,7 @@ def process_records(
                     transport=transport,
                     stream=stream,
                     code="WRITE_FAILED",
-                    detail=err_txt or "InfluxDB write failed",
+                    detail=err_txt or "MongoDB write failed",
                     record={"measurement": pt.measurement, "tags": pt.tags, "time": pt.time.isoformat()},
                     topic=effective_topic,
                 )

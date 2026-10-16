@@ -1,5 +1,5 @@
 """Pytest configuration and global fixtures for project-backend tests.
-Enforces test isolation: tests must never write to production rejects.jsonl or InfluxDB.
+Enforces test isolation: tests must never write to production rejects.jsonl or real database.
 """
 from pathlib import Path
 import pytest

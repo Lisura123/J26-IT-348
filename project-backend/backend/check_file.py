@@ -55,7 +55,7 @@ def check_file(
 
             if res.success and res.point:
                 rows_accepted += 1
-                # Track series time for InfluxDB duplicate detection
+                # Track series time for duplicate detection
                 site_id = res.point.tags.get("site_id", "")
                 ts_str = row.get("timestamp_utc", "")
                 seen_series_time[(site_id, ts_str)] += 1
@@ -101,7 +101,7 @@ def check_file(
             print(f"  - {w}")
 
     print(f"\nDuplicate (site_id, timestamp_utc) pairs: {duplicate_count}")
-    print("  Note: InfluxDB overwrites points sharing the exact same series key and timestamp.")
+    print("  Note: Documents sharing the same unique key (site_id, timestamp_utc) overwrite each other.")
     if duplicates:
         print("  Examples of duplicates:")
         for (sid, ts), count in duplicates[:5]:

@@ -34,7 +34,7 @@ Sensor telemetry is ingested via MQTT over QoS 1 or authenticated HTTP POST.
 ```
 
 ### Field Table
-| Field Name | Type | InfluxDB Role | Unit / Format | Rules & Constraints |
+| Field Name | Type | Document Role | Unit / Format | Rules & Constraints |
 | :--- | :--- | :--- | :--- | :--- |
 | `timestamp_utc` | string | Timestamp (`_time`) | ISO 8601 UTC with `Z` | **Required.** Must end in `Z` or `+00:00`. Local or naive times rejected. |
 | `site_id` | string | Tag | Identifier | **Required.** Must match `reference/sites.csv` and the MQTT topic. |
@@ -59,7 +59,7 @@ Sensor telemetry is ingested via MQTT over QoS 1 or authenticated HTTP POST.
 ## 3. Strict Ingestion Rules
 1. **UTC Timestamps Only**: Timestamps must be timezone-aware UTC ending in `Z` (e.g. `2026-09-10T07:26:00Z`). Timestamps without `Z` or with non-zero offsets are rejected (`TIME_NOT_UTC`).
 2. **Mandatory Record ID**: Every row must carry a distinct `record_id`.
-3. **Missing Values Must Be Omitted**: If a sensor fails or disconnects, do **NOT** send `0` or `"null"`. Simply omit the key entirely from the JSON payload. Missing values are omitted in InfluxDB; sending `0` pollutes calculations and aggregation.
+3. **Missing Values Must Be Omitted**: If a sensor fails or disconnects, do **NOT** send `0` or `"null"`. Simply omit the key entirely from the JSON payload. Missing values are omitted in MongoDB; sending `0` pollutes calculations and aggregation.
 4. **Fixed Data Types**: Never alternate between numbers and strings. Float values must always be JSON numbers.
 5. **No Dataset Metadata**: Metadata columns (`window`, `run_id`, `label`, `health_score`) are stripped in strict mode.
 
@@ -217,4 +217,4 @@ curl -X POST http://localhost:8000/api/v1/ingest/readings \
 - **What Member 1 Must Confirm**:
   1. Quality flags representation: should error states be booleans (`sensor_ok: true`) or a status string enum (`status: "NORMAL"`)?
   2. Sub-sensor diagnostics: are individual sensor statuses emitted (e.g. `temp_sensor_healthy`, `irradiance_sensor_healthy`)?
-- **Crucial Rule**: In InfluxDB, a field's data type is immutable once written. Confirm field types before sending production health records.
+- **Crucial Rule**: In MongoDB, fields maintain exact types (float vs int vs bool). Confirm field types and schema before sending production health records.

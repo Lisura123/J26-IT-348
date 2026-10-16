@@ -1,15 +1,15 @@
-# start_dev.ps1 - Starts local development services for project-backend
-# 1. Verifies .env variable names (without printing values)
-# 2. Starts Mosquitto via project-backend docker-compose.yml
-# 3. Launches MQTT ingest service and FastAPI server in separate windows
-# 4. Records PIDs in .dev-pids and polls /health until ready
+# start_dev.ps1 - Starts native local development services for project-backend (No Docker)
+# 1. Verifies .env variable names (without printing values or exposing secrets)
+# 2. Checks for native Mosquitto executable; starts broker natively if found or guides installation
+# 3. Launches MQTT ingest service (if broker available) and FastAPI server
+# 4. Records PIDs in .dev-pids and polls /health up to 45 seconds until ready
 
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 Set-Location $projectRoot
 
-Write-Host "=== Starting Project Backend Dev Environment ===" -ForegroundColor Cyan
+Write-Host "=== Starting Project Backend Native Dev Environment (No Docker) ===" -ForegroundColor Cyan
 
 # 1. Check required .env variable names
 $envFile = Join-Path $projectRoot ".env"
@@ -19,10 +19,7 @@ if (-not (Test-Path $envFile)) {
 }
 
 $requiredKeys = @(
-    "INFLUX_URL",
-    "INFLUX_ORG",
-    "INFLUX_BUCKET",
-    "INFLUX_TOKEN",
+    "MONGO_URI",
     "MQTT_HOST",
     "MQTT_PORT",
     "API_KEY",
@@ -38,7 +35,10 @@ Get-Content $envFile | ForEach-Object {
     if ($line -and -not $line.StartsWith("#")) {
         $parts = $line.Split("=", 2)
         if ($parts.Length -ge 1) {
-            $foundKeys += $parts[0].Trim()
+            $key = $parts[0].Trim()
+            if ($key) {
+                $foundKeys += $key
+            }
         }
     }
 }
@@ -54,13 +54,33 @@ foreach ($k in $requiredKeys) {
 }
 
 if ($missing.Count -gt 0) {
-    Write-Error "Missing required environment variables in .env: $($missing -join ', ')"
+    Write-Error "Missing required environment variable names in .env: $($missing -join ', ')"
     exit 1
 }
 
-# 2. Start Mosquitto broker
-Write-Host "`nStarting Mosquitto broker via Docker Compose..." -ForegroundColor Cyan
-docker compose -f "$projectRoot\docker-compose.yml" up -d
+# 2. Check for Mosquitto broker (Native or Docker Compose fallback)
+Write-Host "`nChecking Mosquitto MQTT broker..." -ForegroundColor Cyan
+$nativeMosquitto = "C:\Program Files\mosquitto\mosquitto.exe"
+$startedDocker = $false
+
+$pids = @()
+
+if (Test-Path $nativeMosquitto) {
+    Write-Host "  Found native Mosquitto: $nativeMosquitto" -ForegroundColor Green
+    $confFile = Join-Path $projectRoot "mosquitto\mosquitto.conf"
+    $mosqProc = Start-Process -FilePath $nativeMosquitto -ArgumentList "-c `"$confFile`"" -PassThru
+    $pids += $mosqProc.Id
+    Write-Host "  Started native Mosquitto broker (PID: $($mosqProc.Id))"
+} else {
+    Write-Host "  Native Mosquitto not found at $nativeMosquitto." -ForegroundColor Yellow
+    Write-Host "  Starting Mosquitto broker container via docker compose..." -ForegroundColor Yellow
+    $composeFile = Join-Path $projectRoot "docker-compose.yml"
+    docker compose -f "$composeFile" up -d
+    $startedDocker = $true
+    $dockerMarker = Join-Path $projectRoot ".dev-docker"
+    "docker-compose-started" | Out-File -FilePath $dockerMarker -Encoding ascii
+    Write-Host "  Started Mosquitto broker container via docker compose." -ForegroundColor Green
+}
 
 # 3. Determine Python executable
 $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
@@ -68,14 +88,15 @@ if (-not (Test-Path $pythonExe)) {
     $pythonExe = "python"
 }
 
-# 4. Launch MQTT service and FastAPI API in separate windows
+# 4. Launch background services
 Write-Host "`nLaunching background services..." -ForegroundColor Cyan
-$pids = @()
 
+# Start MQTT Ingest Service
 $mqttProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot'; & '$pythonExe' -m backend.ingest.mqtt_service" -PassThru
 $pids += $mqttProc.Id
-Write-Host "  Started MQTT Service (PID: $($mqttProc.Id))"
+Write-Host "  Started MQTT Ingest Service (PID: $($mqttProc.Id))"
 
+# Start FastAPI Server
 $apiProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot'; & '$pythonExe' -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000" -PassThru
 $pids += $apiProc.Id
 Write-Host "  Started FastAPI Server (PID: $($apiProc.Id))"
@@ -85,7 +106,7 @@ $pidFile = Join-Path $projectRoot ".dev-pids"
 $pids | Out-File -FilePath $pidFile -Encoding ascii
 Write-Host "  Saved PIDs to $pidFile"
 
-# 5. Wait for /health endpoint
+# 5. Wait for /health endpoint (up to 45 seconds)
 Write-Host "`nWaiting for API health check..." -ForegroundColor Cyan
 $healthUrl = "http://127.0.0.1:8000/health"
 $maxAttempts = 45
@@ -99,7 +120,7 @@ while ($attempt -lt $maxAttempts -and -not $healthy) {
     try {
         $resp = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2 -ErrorAction Stop
         $lastResp = $resp
-        if ($resp.status -eq "ok" -and $resp.influx_connected -eq $true) {
+        if ($resp.status -eq "ok" -and $resp.connected -eq $true) {
             $healthy = $true
         }
     } catch {
@@ -114,15 +135,18 @@ while ($attempt -lt $maxAttempts -and -not $healthy) {
 }
 
 if ($healthy) {
-    Write-Host "  [OK] Backend API is healthy!" -ForegroundColor Green
+    Write-Host "  [OK] Backend API is healthy with MongoDB Atlas connected!" -ForegroundColor Green
 } else {
     Write-Warning "API did not respond healthy within $maxAttempts seconds."
     if ($lastResp) {
         if ($lastResp -is [string]) {
-            Write-Host "Health JSON: $lastResp" -ForegroundColor Yellow
+            # Sanitize any potential connection credentials
+            $sanitized = $lastResp -replace '://[^:]+:[^@]+@', '://***:***@'
+            Write-Host "Health diagnostics: $sanitized" -ForegroundColor Yellow
         } else {
             $json = $lastResp | ConvertTo-Json -Depth 5
-            Write-Host "Health JSON:`n$json" -ForegroundColor Yellow
+            $sanitized = $json -replace '://[^:]+:[^@]+@', '://***:***@'
+            Write-Host "Health diagnostics:`n$sanitized" -ForegroundColor Yellow
         }
     } else {
         Write-Warning "API endpoint at $healthUrl could not be reached."
@@ -134,5 +158,9 @@ Write-Host "`n=== Development Services Ready ===" -ForegroundColor Green
 Write-Host "  Health Status:    http://localhost:8000/health"
 Write-Host "  Swagger UI Docs:  http://localhost:8000/docs"
 Write-Host "  Query API:        http://localhost:8000/api/v1"
-Write-Host "  Mosquitto Broker: localhost:1883"
+if (Test-Path $nativeMosquitto) {
+    Write-Host "  Mosquitto Broker: localhost:1883 (Native Windows Process)"
+} else {
+    Write-Host "  Mosquitto Broker: localhost:1883 (Docker Container)"
+}
 Write-Host "`nTo stop all services started by this script, run .\scripts\stop_dev.ps1"

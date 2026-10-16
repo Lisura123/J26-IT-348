@@ -121,11 +121,25 @@ def log_reject(
         rec_str = rec_str[:500] + "...[truncated]"
 
     # Scrub potential secrets from environment
-    for key in ("INFLUX_TOKEN", "API_KEY", "READ_API_KEY", "INFLUX_PASSWORD"):
+    secret_keys = (
+        "MONGO_ROOT_PASSWORD",
+        "MONGO_APP_PASSWORD",
+        "MONGO_READER_PASSWORD",
+        "MONGO_URI",
+        "API_KEY",
+        "READ_API_KEY",
+        "INFLUX_TOKEN",
+        "INFLUX_PASSWORD",
+    )
+    for key in secret_keys:
         val = os.environ.get(key)
-        if val and len(val) >= 4:
-            detail = detail.replace(val, "***")
-            rec_str = rec_str.replace(val, "***")
+        if val and len(val.strip()) >= 4:
+            detail = detail.replace(val.strip(), "***")
+            rec_str = rec_str.replace(val.strip(), "***")
+
+    import re
+    detail = re.sub(r"://([^:]+):([^@]+)@", r"://***:***@", detail)
+    rec_str = re.sub(r"://([^:]+):([^@]+)@", r"://***:***@", rec_str)
 
     eff_stream = stream if stream in VALID_STREAMS else None
 

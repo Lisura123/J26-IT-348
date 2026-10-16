@@ -148,11 +148,11 @@ async function fetchAggregatedSeries(stream, siteId, field, startUtc, stopUtc, e
 
 ---
 
-## 4. Alternative: Direct InfluxDB Read-Only Token
-If Member 4 desires to run custom Flux queries directly against InfluxDB (port 8087):
-1. Ask Member 3 to generate a **Read-Only Scoped InfluxDB Token** for bucket `solar_pv`.
-2. Do **NOT** use Member 3's all-access administrative token.
-3. Use InfluxDB client libraries (`@influxdata/influxdb-client` for JS).
+## 4. Alternative: Direct MongoDB Atlas Read-Only User
+If Member 4 desires to inspect stored data directly in MongoDB Atlas using MongoDB Compass GUI or `mongosh`:
+1. Ask Member 3 for the **Read-Only Database Account** (`MONGO_READER_USER`) credentials for database `solar_pv`.
+2. Do **NOT** use Member 3's administrative account.
+3. Connect securely using MongoDB Compass or `mongosh` without write/drop privileges.
 
 ---
 

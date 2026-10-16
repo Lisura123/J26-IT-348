@@ -1,5 +1,5 @@
-"""Point specification dataclass for representing InfluxDB points.
-Pure Python dataclass without external InfluxDB dependencies.
+"""Point specification dataclass for representing telemetry points.
+Pure Python dataclass without external database dependencies.
 """
 from dataclasses import dataclass, field
 from datetime import datetime

@@ -167,7 +167,9 @@ def run_http_replay(
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
 
     total = len(records)
+    est_sec = total / 100.0
     print(f"\n[HTTP] Starting replay of {total} records to {url} (batch_size={batch_size}, speed={speed})...")
+    print(f"  Estimated duration: ~{est_sec:.1f}s (Atlas free tier throttles writes at ~100 ops/s; e.g. 3000 rows can take ~30s or more)")
 
     total_accepted = 0
     total_rejected = 0
@@ -178,6 +180,7 @@ def run_http_replay(
 
     # Explicit timeouts: connect 10s, read 30s
     timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
+    start_time = time.time()
 
     with httpx.Client(timeout=timeout) as client:
         prev_dt: Optional[datetime] = None
@@ -212,8 +215,10 @@ def run_http_replay(
                     total_reasons[code] += cnt
 
                 sent += len(batch)
+                elapsed = max(0.001, time.time() - start_time)
+                rate = sent / elapsed
                 if sent % 500 < batch_size or sent == total:
-                    print(f"  Progress: {sent}/{total} rows sent...")
+                    print(f"  Progress: {sent}/{total} rows sent ({rate:.1f} rows/s)...")
         else:
             # Send row by row with speed delay
             for idx, rec in enumerate(records):
@@ -250,11 +255,17 @@ def run_http_replay(
                     total_reasons[code] += cnt
 
                 sent += 1
+                elapsed = max(0.001, time.time() - start_time)
+                rate = sent / elapsed
                 if sent % 500 == 0 or sent == total:
-                    print(f"  Progress: {sent}/{total} rows sent...")
+                    print(f"  Progress: {sent}/{total} rows sent ({rate:.1f} rows/s)...")
 
     # Print totals
+    total_elapsed = max(0.001, time.time() - start_time)
+    final_rate = sent / total_elapsed
     print("\n=== HTTP Replay Totals ===")
+    print(f"  Duration:     {total_elapsed:.2f}s")
+    print(f"  Throughput:   {final_rate:.1f} rows/s")
     print(f"  Accepted:     {total_accepted}")
     print(f"  Rejected:     {total_rejected}")
     print(f"  Written:      {total_written}")
@@ -269,7 +280,7 @@ def run_http_replay(
         sys.exit(1)
 
     if total_write_failed > 0:
-        print(f"Error: {total_write_failed} points failed to write to InfluxDB.", file=sys.stderr)
+        print(f"Error: {total_write_failed} records failed to write to database.", file=sys.stderr)
         sys.exit(1)
 
 
@@ -290,7 +301,10 @@ def run_mqtt_replay(
     client.loop_start()
 
     total = len(records)
+    est_sec = total / 100.0
     print(f"[MQTT] Starting replay of {total} records (speed={speed})...")
+    print(f"  Estimated duration: ~{est_sec:.1f}s (Atlas free tier throttles writes at ~100 ops/s; e.g. 3000 rows can take ~30s or more)")
+    start_time = time.time()
     prev_dt: Optional[datetime] = None
     sent = 0
 
@@ -309,8 +323,10 @@ def run_mqtt_replay(
             info = client.publish(topic, payload, qos=1)
             info.wait_for_publish()
             sent += len(batch)
+            elapsed = max(0.001, time.time() - start_time)
+            rate = sent / elapsed
             if sent % 500 < batch_size or sent == total:
-                print(f"  Progress: {sent}/{total} rows sent...")
+                print(f"  Progress: {sent}/{total} rows sent ({rate:.1f} rows/s)...")
     else:
         # Send row by row with delay
         for rec in records:
@@ -328,8 +344,10 @@ def run_mqtt_replay(
             info = client.publish(topic, payload, qos=1)
             info.wait_for_publish()
             sent += 1
+            elapsed = max(0.001, time.time() - start_time)
+            rate = sent / elapsed
             if sent % 500 == 0 or sent == total:
-                print(f"  Progress: {sent}/{total} rows sent...")
+                print(f"  Progress: {sent}/{total} rows sent ({rate:.1f} rows/s)...")
 
     print("[MQTT] All messages published. Waiting 3 seconds for service buffer flush...")
     time.sleep(3.0)
@@ -337,8 +355,10 @@ def run_mqtt_replay(
     client.loop_stop()
     client.disconnect()
 
-    print(f"\n[MQTT] Replay complete: {sent} rows published.")
-    print("Reminder: Run verify_backend to confirm all published points were written to InfluxDB:")
+    total_elapsed = max(0.001, time.time() - start_time)
+    final_rate = sent / total_elapsed
+    print(f"\n[MQTT] Replay complete: {sent} rows published in {total_elapsed:.2f}s ({final_rate:.1f} rows/s).")
+    print("Reminder: Run verify_backend to confirm all published points were written to MongoDB:")
     if file_path:
         print(f"  python -m backend.tools.verify_backend --stream {stream} --file {file_path}")
     else:

@@ -54,7 +54,7 @@ app.add_middleware(
 app.include_router(query_router)
 
 # Register ReadError exception handler returning 503
-from backend.influx_reader import ReadError
+from backend.mongo_reader import ReadError
 import logging
 
 logger = logging.getLogger("backend.api")
@@ -65,7 +65,7 @@ async def handle_read_error(request: Request, exc: ReadError):
     logger.error("Read API encountered %s", type(exc).__name__)
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"detail": "InfluxDB unreachable"},
+        content={"detail": "database unreachable"},
     )
 
 
@@ -76,22 +76,25 @@ app.state.reader = None
 
 @app.get("/health")
 def health(request: Request):
-    """Health check: verifies InfluxDB ping and reports current ingestion counters.
+    """Health check: verifies MongoDB ping and reports current ingestion counters.
+    Returns service health and MongoDB Atlas connectivity status.
+    Format: {"status": "ok"|"degraded", "storage": "mongodb", "connected": true|false, "counters": {...}}
     Does not require an API key.
     """
     writer = getattr(request.app.state, "writer", None)
     if writer is None:
         try:
             writer = get_default_writer()
-            influx_ok = writer.ping()
+            db_ok = writer.ping()
         except Exception:
-            influx_ok = False
+            db_ok = False
     else:
-        influx_ok = writer.ping()
+        db_ok = writer.ping()
 
     return {
-        "status": "ok" if influx_ok else "degraded",
-        "influx_connected": influx_ok,
+        "status": "ok" if db_ok else "degraded",
+        "storage": "mongodb",
+        "connected": bool(db_ok),
         "counters": get_counters(),
     }
 

@@ -19,18 +19,33 @@ The backend uses two distinct API keys defined in `.env`:
    ```
 4. Privately distribute the updated `API_KEY` to Member 1 and `READ_API_KEY` to Member 4.
 
-### B. Leaked InfluxDB Token Emergency Rotation
-If an `INFLUX_TOKEN` is accidentally compromised:
-1. Log into InfluxDB UI: `http://localhost:8087`.
-2. Navigate to **Load Data** -> **API Tokens**.
-3. Create a **New All-Access Token** (or scoped bucket token).
-4. Update `INFLUX_TOKEN` in `.env`.
-5. In the UI, click on the old compromised token and select **Delete Token**.
-6. Restart backend ingestion services.
+### B. MongoDB Atlas Database User Rotation
+If a database user's password or connection string is compromised:
+1. Log into MongoDB Atlas Console: `https://cloud.mongodb.com`.
+2. Navigate to **Security** -> **Database Access**.
+3. Locate the compromised user (e.g. `MONGO_APP_USER` or `MONGO_READER_USER`).
+4. Click **Edit**, enter a new secure random password, and click **Update User**.
+5. Update `MONGO_APP_PASSWORD` or `MONGO_READER_PASSWORD` (and `MONGO_URI` if credentials are embedded) in `.env`.
+6. Restart backend ingestion services (`.\scripts\start_dev.ps1`).
 
 ---
 
-## 2. Switching from Test (`test_`) to Real Production Measurements
+## 2. MongoDB Atlas Configuration & Role Separation
+
+### Least-Privilege Role Setup
+- **Writer Account (`MONGO_APP_USER`)**: Assigned `readWrite` on database `solar_pv`.
+- **Reader Account (`MONGO_READER_USER`)**: Assigned `read` on database `solar_pv`.
+- **Administrative Account (`MONGO_ROOT_USER`)**: Assigned `dbAdmin` / `readWriteAnyDatabase`.
+
+### Atlas Network Access (IP Access List)
+1. In the Atlas Console, navigate to **Security** -> **Network Access**.
+2. Click **Add IP Address**.
+3. Choose **Add Current IP Address** for secure developer workstation access.
+4. If testing across changing networks, configure temporary access with high-entropy passwords.
+
+---
+
+## 3. Switching from Test (`test_`) to Real Production Measurements
 
 ### Safety Guard Mechanism
 The backend includes a hardcoded startup guard: if `MEASUREMENT_PREFIX` is empty, startup will fail with a `RuntimeError` unless `ALLOW_REAL_MEASUREMENTS=1` is explicitly set in the environment.
@@ -52,49 +67,47 @@ Only execute when:
 
 ---
 
-## 3. Cleaning Test Data (`DOCUMENTED ONLY - DO NOT EXECUTE LIGHTLY`)
+## 4. Cleaning Test Data (`OPTIONAL - VERIFY TARGET FIRST`)
 
 > [!CAUTION]
-> **DOUBLE-CHECK WARNING BEFORE RUNNING DELETE COMMANDS!**
-> Never run `influx delete` without double-checking the `--predicate` filter.
-> Never target Member 3's reserved measurements (`network_*`, `fl_*`, `ota_*`).
-> Always verify bucket name and date range before pressing enter.
+> **VERIFY DATABASE & COLLECTION NAME BEFORE RUNNING CLEANUP!**
+> Never run collection drops or deletes against production collections or Member 3's reserved collections (`network_*`, `fl_*`, `ota_*`).
+> Always verify that the database is `solar_pv` and target collection begins with `test_` before executing.
 
-If Member 3 needs to purge development test measurements (`test_sensor_*`) prior to go-live:
+If Member 3 needs to optionally purge development test collections (`test_sensor_*`) prior to go-live:
 
-```bash
-# Example syntax using the InfluxDB CLI tool inside the container:
-# PURGE ONLY PREFIXED TEST MEASUREMENTS:
-influx delete \
-  --bucket solar_pv \
-  --start '1970-01-01T00:00:00Z' \
-  --stop '2030-01-01T00:00:00Z' \
-  --predicate '_measurement == "test_sensor_readings" or _measurement == "test_sensor_health"' \
-  --token <ASK_MEMBER_3_PRIVATELY> \
-  --org j26
+```javascript
+// Using mongosh or MongoDB Compass:
+use solar_pv;
+
+// Verify existing collections first:
+show collections;
+
+// OPTIONAL: Drop only development test collections
+db.test_sensor_readings.drop();
+db.test_sensor_health.drop();
+db.test_fault_predictions.drop();
+db.test_twin_output.drop();
 ```
 
 ---
 
-## 4. InfluxDB Volume Backup & Maintenance Advice
-- **Docker Volume Storage**: InfluxDB persistence is stored in the Docker named volume or bind mount associated with the database container.
-- **Hot Backup via Influx CLI**:
-  ```bash
-  influx backup /backup/influx_$(date +%Y%m%d) \
-    --token <ASK_MEMBER_3_PRIVATELY> \
-    --org j26
+## 5. MongoDB Atlas Backup & Maintenance
+- **Automated Cloud Backups**: MongoDB Atlas provides continuous cloud backup snapshots under the **Backup** tab.
+- **On-Demand Dump (`mongodump`)**:
+  ```powershell
+  mongodump --uri="<YOUR_ATLAS_URI>" --db=solar_pv --out="./backup_$(Get-Date -Format 'yyyyMMdd')"
   ```
-- **File System Snapshot**: If using Docker volume mounts, ensure the host directory is included in regular automated filesystem snapshots.
 
 ---
 
-## 5. Go-Live Production Checklist
+## 6. Go-Live Production Checklist
 
-- [ ] All 86+ pytest suite tests passing (`pytest -q`).
+- [ ] All 97+ pytest suite tests passing (`pytest -q`).
 - [ ] Schema confirmation signed off by Member 1 (Sensing) for health flags.
 - [ ] Schema confirmation signed off by Member 2 (TinyML) for prediction classes.
 - [ ] Schema confirmation signed off by Member 4 (Digital Twin) for twin output fields.
 - [ ] `smoke_test` passes cleanly on both HTTP and MQTT transports.
-- [ ] Mosquitto MQTT broker configured with password file / authentication for production.
+- [ ] Native Mosquitto MQTT broker configured with password file / authentication for production.
 - [ ] `MEASUREMENT_PREFIX` set to empty string and `ALLOW_REAL_MEASUREMENTS=1` enabled in production environment.
-- [ ] Final verification run confirms Member 3's 6 reserved measurements remain intact.
+- [ ] Final verification run confirms Member 3's 6 reserved measurements remain intact (document count = 0 / untouched).

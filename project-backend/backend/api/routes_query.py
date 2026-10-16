@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from backend.config import get_stream_config
-from backend.influx_reader import InfluxReader, ReadError
+from backend.mongo_reader import MongoReader, ReadError
 from backend.sites import get_all_sites, valid_site_ids
 from backend.validate import parse_utc_timestamp
 
@@ -31,10 +31,10 @@ MAX_SERIES_RANGE_DAYS = 31
 
 
 def get_active_reader(request: Request):
-    """Retrieves reader from app state or instantiates default InfluxReader."""
+    """Retrieves reader from app state or instantiates default MongoReader."""
     reader = getattr(request.app.state, "reader", None)
     if reader is None:
-        reader = InfluxReader.from_env()
+        reader = MongoReader.from_env()
     return reader
 
 
@@ -124,10 +124,10 @@ def query_latest(
     try:
         result = reader.get_latest(stream=stream, site_id=site_id)
     except ReadError as exc:
-        logger.error("InfluxDB read error in query_latest: %s", type(exc).__name__)
+        logger.error("MongoDB read error in query_latest: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="InfluxDB unreachable",
+            detail="database unreachable",
         )
     if result is None:
         raise HTTPException(
@@ -256,10 +256,10 @@ def query_series(
             limit=limit,
         )
     except ReadError as exc:
-        logger.error("InfluxDB read error in query_series: %s", type(exc).__name__)
+        logger.error("MongoDB read error in query_series: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="InfluxDB unreachable",
+            detail="database unreachable",
         )
 
     return {

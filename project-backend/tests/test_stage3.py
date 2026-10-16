@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 from backend.api.main import app
 from backend.config import verify_startup_safety
-from backend.influx_reader import FakeReader, ReadError
+from backend.mongo_reader import FakeReader, ReadError
 from backend.tools.replay import (
     is_pv_fault_dataset,
     load_and_filter_records,
@@ -19,7 +19,32 @@ from backend.tools.replay import (
 )
 from backend.tools.verify_backend import verify_dataset
 
-DATASET_CSV_PATH = Path(__file__).resolve().parent.parent.parent / "pv_fault_dataset.csv"
+
+def resolve_dataset_path() -> Path:
+    r"""Finds pv_fault_dataset.csv by checking:
+    1. Environment variable PV_DATASET
+    2. ..\pv_fault_dataset.csv relative to project-backend
+    3. ..\component3-federated-backend\data\shared\pv_fault_dataset.csv relative to project-backend
+    """
+    env_val = os.environ.get("PV_DATASET", "").strip()
+    if env_val:
+        p = Path(env_val)
+        if p.exists():
+            return p.resolve()
+
+    project_backend = Path(__file__).resolve().parent.parent
+    p2 = (project_backend / ".." / "pv_fault_dataset.csv").resolve()
+    if p2.exists():
+        return p2
+
+    p3 = (project_backend / ".." / "component3-federated-backend" / "data" / "shared" / "pv_fault_dataset.csv").resolve()
+    if p3.exists():
+        return p3
+
+    return p2
+
+
+DATASET_CSV_PATH = resolve_dataset_path()
 TEST_READ_KEY = "test-dashboard-read-key-1234"
 TEST_INGEST_KEY = "test-ingest-key-5678"
 
@@ -633,18 +658,18 @@ def test_smoke_test_run_marker_and_expected_voltages():
 # ============================================================================
 
 def test_read_api_query_latest_503_on_read_error(test_client, fake_reader):
-    """GET /api/v1/query/latest returns 503 with InfluxDB unreachable when ReadError is raised."""
+    """GET /api/v1/query/latest returns 503 with database unreachable when ReadError is raised."""
     fake_reader.should_raise = True
     resp = test_client.get(
         "/api/v1/query/latest?stream=readings&site_id=SITE-A",
         headers={"X-API-Key": TEST_READ_KEY},
     )
     assert resp.status_code == 503
-    assert resp.json() == {"detail": "InfluxDB unreachable"}
+    assert resp.json() == {"detail": "database unreachable"}
 
 
 def test_read_api_query_series_503_on_read_error(test_client, fake_reader):
-    """GET /api/v1/query/series returns 503 with InfluxDB unreachable when ReadError is raised."""
+    """GET /api/v1/query/series returns 503 with database unreachable when ReadError is raised."""
     fake_reader.should_raise = True
     url = (
         "/api/v1/query/series?stream=readings&site_id=SITE-A&field=voltage_v"
@@ -652,7 +677,7 @@ def test_read_api_query_series_503_on_read_error(test_client, fake_reader):
     )
     resp = test_client.get(url, headers={"X-API-Key": TEST_READ_KEY})
     assert resp.status_code == 503
-    assert resp.json() == {"detail": "InfluxDB unreachable"}
+    assert resp.json() == {"detail": "database unreachable"}
 
 
 def test_verify_backend_read_error_exits_2_no_counts(tmp_path, capsys):
@@ -670,7 +695,7 @@ def test_verify_backend_read_error_exits_2_no_counts(tmp_path, capsys):
     )
     assert ret == 2
     captured = capsys.readouterr()
-    assert "CANNOT READ INFLUXDB:" in captured.out
+    assert "CANNOT READ MONGODB:" in captured.out
     assert "Expected rows:" not in captured.out
     assert "Found rows:" not in captured.out
     assert "MISMATCH" not in captured.out
@@ -678,11 +703,11 @@ def test_verify_backend_read_error_exits_2_no_counts(tmp_path, capsys):
 
 
 def test_smoke_test_read_error_exits_2(capsys, monkeypatch):
-    """smoke_test prints CANNOT READ INFLUXDB and exits code 2 when ping/read fails."""
+    """smoke_test prints CANNOT READ MONGODB and exits code 2 when ping/read fails."""
     from backend.tools.smoke_test import main as smoke_main
 
     failing_reader = FakeReader(should_raise=True)
-    monkeypatch.setattr("backend.tools.smoke_test.InfluxReader.from_env", lambda: failing_reader)
+    monkeypatch.setattr("backend.tools.smoke_test.MongoReader.from_env", lambda: failing_reader)
     test_args = ["smoke_test.py", "--transport", "http", "--file", "dummy.csv"]
     monkeypatch.setattr("sys.argv", test_args)
 
@@ -690,7 +715,7 @@ def test_smoke_test_read_error_exits_2(capsys, monkeypatch):
         smoke_main()
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "CANNOT READ INFLUXDB:" in captured.out
+    assert "CANNOT READ MONGODB:" in captured.out
     assert "field values" not in captured.out
 
 

@@ -1,7 +1,7 @@
 # stop_dev.ps1 - Stops development services started by start_dev.ps1
-# 1. Terminates PowerShell background worker processes recorded in .dev-pids
-# 2. Stops Mosquitto container via project-backend docker-compose.yml ONLY
-# Never stops, inspects, or touches any other containers.
+# Stops ONLY the PIDs listed in .dev-pids and their descendant processes via ParentProcessId.
+# Plus 'docker compose stop' for this compose file if it started the container.
+# NEVER selects processes by name. Never touches Windows services, other containers or volumes.
 
 $ErrorActionPreference = "SilentlyContinue"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -10,42 +10,61 @@ Set-Location $projectRoot
 
 Write-Host "=== Stopping Project Backend Dev Services ===" -ForegroundColor Cyan
 
-# 1. Stop recorded process PIDs
+function Get-DescendantPids([int]$parentPid) {
+    $descendants = @()
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $parentPid" -ErrorAction SilentlyContinue
+    foreach ($c in $children) {
+        $cPid = [int]$c.ProcessId
+        $descendants += Get-DescendantPids $cPid
+        $descendants += $cPid
+    }
+    return $descendants
+}
+
+# 1. Stop recorded process PIDs and their descendants
 $pidFile = Join-Path $projectRoot ".dev-pids"
 if (Test-Path $pidFile) {
-    $pids = Get-Content $pidFile
-    foreach ($p in $pids) {
-        $procId = [int]$p.Trim()
-        if ($procId -gt 0) {
-            $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-            if ($proc) {
-                Write-Host "  Stopping process $procId ($($proc.ProcessName))..."
-                # Stop process tree (powershell window and child python processes)
-                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-            } else {
-                Write-Host "  Process $procId is already stopped."
+    $rawPids = Get-Content $pidFile
+    $pidsToStop = @()
+    foreach ($line in $rawPids) {
+        $p = [int]($line.Trim())
+        if ($p -gt 0) {
+            # Find all descendant processes first
+            $children = Get-DescendantPids $p
+            foreach ($cp in $children) {
+                if ($pidsToStop -notcontains $cp) {
+                    $pidsToStop += $cp
+                }
+            }
+            if ($pidsToStop -notcontains $p) {
+                $pidsToStop += $p
             }
         }
     }
+
+    # Stop all collected PIDs (children first, then parents)
+    foreach ($targetPid in $pidsToStop) {
+        $proc = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
+        if ($proc) {
+            Write-Host "  Stopping process PID $targetPid..."
+            Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     Remove-Item -Path $pidFile -Force -ErrorAction SilentlyContinue
     Write-Host "  Removed $pidFile."
 } else {
     Write-Host "  No .dev-pids file found."
 }
 
-# Also ensure any lingering python processes running uvicorn or mqtt_service from this repo are stopped
-Get-Process python -ErrorAction SilentlyContinue | ForEach-Object {
-    try {
-        $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
-        if ($cmd -match "backend\.ingest\.mqtt_service" -or $cmd -match "backend\.api\.main:app") {
-            Write-Host "  Stopping lingering worker PID $($_.Id)..."
-            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-        }
-    } catch {}
+# 2. If docker compose was started by start_dev.ps1, run 'docker compose stop' for this compose file
+$dockerMarker = Join-Path $projectRoot ".dev-docker"
+if (Test-Path $dockerMarker) {
+    $composeFile = Join-Path $projectRoot "docker-compose.yml"
+    Write-Host "  Stopping container started via docker compose..." -ForegroundColor Cyan
+    docker compose -f "$composeFile" stop
+    Remove-Item -Path $dockerMarker -Force -ErrorAction SilentlyContinue
+    Write-Host "  Stopped docker-compose service and removed marker."
 }
-
-# 2. Stop Mosquitto container for this project only
-Write-Host "`nStopping Mosquitto container via Docker Compose..." -ForegroundColor Cyan
-docker compose -f "$projectRoot\docker-compose.yml" stop
 
 Write-Host "`n=== Dev Services Stopped Cleanly ===" -ForegroundColor Green

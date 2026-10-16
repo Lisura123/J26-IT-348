@@ -3,7 +3,7 @@ Sends 6 valid records (3 from SITE-A, 3 from SITE-C) with a unique run marker
 on voltage_v, and 3 deliberately invalid records.
 
 Verifies:
-  - All 6 rows exist in InfluxDB with the exact marked voltage_v value (proves transport wrote them)
+  - All 6 rows exist in MongoDB with the exact marked voltage_v value (proves transport wrote them)
   - For HTTP: 6 accepted, 3 rejected, reject codes: TIME_NOT_UTC, UNKNOWN_SITE, PROTOCOL_MISMATCH
   - For MQTT: rejects file grew by 3 lines with transport "mqtt" and the 3 codes
   - All 6 reserved Member 3 measurements remain completely untouched
@@ -29,8 +29,7 @@ import httpx
 import paho.mqtt.client as mqtt
 
 from backend.config import get_final_measurement, get_reserved_measurements, load_schema
-from backend.influx_reader import InfluxReader, ReadError
-from backend.influx_writer import InfluxWriter
+from backend.mongo_reader import MongoReader, ReadError
 from backend.ingest.rejects import get_rejects_file
 
 load_dotenv()
@@ -181,38 +180,47 @@ def run_mqtt_smoke_test(
     client.disconnect()
 
 
-def verify_influx_voltages(
-    reader: InfluxReader,
+def verify_mongo_voltages(
+    reader: Any,
     measurement: str,
     expected_voltages: Dict[Tuple[str, str], float],
 ) -> List[str]:
-    """Reads back records by (site_id, _time) and requires voltage_v to match marked values."""
-    timestamps = [t for (_, t) in expected_voltages.keys()]
-    t_min = min(timestamps)
-    max_dt = datetime.fromisoformat(max(timestamps).replace("Z", "+00:00")) + timedelta(seconds=2)
-    t_max = max_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    flux = f'''
-    from(bucket: "{reader.bucket}")
-      |> range(start: {t_min}, stop: {t_max})
-      |> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "voltage_v")
-      |> filter(fn: (r) => r.site_id == "SITE-A" or r.site_id == "SITE-C")
-    '''
-    tables = reader.query(flux)
+    """Reads back records by (site_id, timestamp_utc) and requires voltage_v to match marked values."""
     found_map: Dict[Tuple[str, str], float] = {}
 
-    for t in tables:
-        for rec in t.records:
-            sid = str(rec.values.get("site_id", ""))
-            rec_time = rec.get_time()
-            time_str = rec_time.strftime("%Y-%m-%dT%H:%M:%SZ") if rec_time else ""
-            val = float(rec.get_value()) if rec.get_value() is not None else 0.0
+    if hasattr(reader, "db") and reader.db is not None:
+        col = reader.db[measurement]
+        sites = list(set(sid for sid, _ in expected_voltages.keys()))
+        docs = col.find({"site_id": {"$in": sites}})
+        for d in docs:
+            sid = str(d.get("site_id", ""))
+            dt = d.get("timestamp_utc")
+            if isinstance(dt, datetime):
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                time_str = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            else:
+                time_str = str(dt)
+            val = float(d.get("voltage_v", 0.0))
             found_map[(sid, time_str)] = round(val, 4)
+    elif hasattr(reader, "rows"):
+        for r in getattr(reader, "rows", []):
+            if r.get("stream") == measurement or r.get("stream") == "readings":
+                sid = r.get("site_id")
+                dt = r.get("time_utc")
+                if isinstance(dt, datetime):
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    time_str = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    time_str = str(dt)
+                val = float(r.get("fields", {}).get("voltage_v", 0.0))
+                found_map[(sid, time_str)] = round(val, 4)
 
     errors = []
     for (sid, t_str), exp_val in expected_voltages.items():
         if (sid, t_str) not in found_map:
-            errors.append(f"Missing row in InfluxDB: site={sid}, time={t_str}")
+            errors.append(f"Missing row in MongoDB: site={sid}, time={t_str}")
         else:
             found_val = found_map[(sid, t_str)]
             if abs(found_val - exp_val) > 1e-3:
@@ -263,24 +271,24 @@ def main():
     print(f"=== Repeatable Smoke Test: Transport={args.transport.upper()} (Run Marker: {run_marker}) ===")
     print(f"Target readings measurement: '{readings_measurement}'")
 
-    # 1. Connect to InfluxDB and record counts BEFORE
-    reader = InfluxReader.from_env()
+    # 1. Connect to MongoDB and record counts BEFORE
+    reader = MongoReader.from_env()
     before_counts: Dict[str, int] = {}
     try:
         if not reader.ping():
-            print("CANNOT READ INFLUXDB: InfluxDB ping failed")
+            print("CANNOT READ MONGODB: MongoDB ping failed")
             sys.exit(2)
 
         for m in reserved_measurements:
             cnt = reader.count_field_values(m)
             before_counts[m] = cnt
     except ReadError as e:
-        print(f"CANNOT READ INFLUXDB: {e}")
+        print(f"CANNOT READ MONGODB: {e}")
         sys.exit(2)
 
-    print("\nReading baseline InfluxDB field-value counts BEFORE test...")
+    print("\nReading baseline MongoDB document counts BEFORE test...")
     for m in reserved_measurements:
-        print(f"  [Reserved] {m:22s} : {before_counts[m]:6d} field values")
+        print(f"  [Reserved] {m:22s} : {before_counts[m]:6d} documents")
 
     # 2. Extract records with marked voltage_v
     valid_recs, invalid_recs, expected_voltages = extract_smoke_records(args.file, run_marker)
@@ -305,23 +313,23 @@ def main():
     elif args.transport == "mqtt":
         run_mqtt_smoke_test(valid_recs, invalid_recs, args.mqtt_host, args.mqtt_port)
 
-    # 4. Check InfluxDB reserved measurement counts AFTER
-    print("\nReading InfluxDB field-value counts AFTER test...")
+    # 4. Check MongoDB reserved measurement counts AFTER
+    print("\nReading MongoDB document counts AFTER test...")
     reserved_changed = False
     try:
         for m in reserved_measurements:
             cnt = reader.count_field_values(m)
             diff = cnt - before_counts[m]
             status = "OK (unchanged)" if diff == 0 else f"VIOLATION (+{diff})"
-            print(f"  [Reserved] {m:22s} : {cnt:6d} field values -> {status}")
+            print(f"  [Reserved] {m:22s} : {cnt:6d} documents -> {status}")
             if diff != 0:
                 reserved_changed = True
 
-        # 5. Read back by (site_id, _time) and verify exact marked voltage_v
-        print("\nVerifying readback of 6 marked rows by (site_id, _time)...")
-        voltage_errors = verify_influx_voltages(reader, readings_measurement, expected_voltages)
+        # 5. Read back by (site_id, timestamp_utc) and verify exact marked voltage_v
+        print("\nVerifying readback of 6 marked rows by (site_id, timestamp_utc)...")
+        voltage_errors = verify_mongo_voltages(reader, readings_measurement, expected_voltages)
     except ReadError as e:
-        print(f"CANNOT READ INFLUXDB: {e}")
+        print(f"CANNOT READ MONGODB: {e}")
         sys.exit(2)
     finally:
         reader.close()
