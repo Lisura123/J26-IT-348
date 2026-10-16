@@ -2,7 +2,7 @@
 
 Code: `src/tinyml/quantize.py` (arithmetic, calibration, emulator, comparison), `src/tinyml/device_reference.py` (Float32 preprocessing reference), `src/tinyml/golden.py` (golden vectors), `src/tinyml/codegen.py` (C headers), `src/tinyml/hostc.py` (gcc host tests). Script: `scripts/07_quantize_model.py`. Colab: `notebooks/colab_quantization.ipynb`. Firmware: `firmware/pv_fault/` (portable C99). Tests: `tests/test_quantize.py`, `tests/test_codegen.py`, `tests/host_c/test_main.c`.
 
-**Status:** protocol fixed before the official run (`int8-v1`). The official quantisation has **not** been run; generated headers, INT8 parameters and the report are produced by that run and committed after review. No ESP32 deployment or measurement has been done.
+**Status:** protocol fixed before the official run (`int8-v1`). The official TRAINING-only quantisation was run **once** in Google Colab on 2026-10-16; its outputs are committed unchanged (section 12). Sections 1–11 are the protocol and were not changed after the run. No ESP32 deployment or measurement has been done.
 
 ## 1. System
 
@@ -147,3 +147,44 @@ Otherwise the deployment stays Float32. The Float32 device path is also compared
 1. **Commit 1:** code, tests, firmware sources, this protocol, the architecture update. No official run.
 2. **Official run (Colab, once):** `notebooks/colab_quantization.ipynb` writes `models/int8/quant_params.json` and its manifest, `firmware/pv_fault/generated/*.h`, `tests/host_c/golden_vectors.h` and `results/quantization_report.{json,md}`. Existing output is never overwritten.
 3. **Review**, then commit those files unchanged. After that, `tests/test_codegen.py::test_official_int8_artifacts_and_c_tests` checks the manifest hashes and runs the host C tests on the committed headers.
+
+## 12. Official run record
+
+The eight files below are the unmodified Colab output. `models/int8/manifest.json` holds the SHA-256 of the first five; `tests/test_codegen.py::test_official_int8_artifacts_and_c_tests` checks those hashes and runs the host C tests on the committed headers.
+
+| File | SHA-256 (start) |
+|---|---|
+| `models/int8/quant_params.json` | `5daa66d21098b208` |
+| `firmware/pv_fault/generated/pv_feature_params.h` | `792d047c8112a5ea` |
+| `firmware/pv_fault/generated/pv_model_f32.h` | `b8b51faa47c4be61` |
+| `firmware/pv_fault/generated/pv_model_int8.h` | `01cd31b79be15d19` |
+| `tests/host_c/golden_vectors.h` | `8035f13ac8e1a622` |
+| `models/int8/manifest.json` | `30d073f7b8952bd7` |
+| `results/quantization_report.json` | `4450e851d941603a` |
+| `results/quantization_report.md` | `19915015a745d7b9` |
+
+| Item | Value |
+|---|---|
+| Run | Google Colab, 2026-10-16, notebook `colab_quantization.ipynb` with `APPROVED_COMMIT = ef6e9ae9badeeb06b149bc1177d546d014d54ed2` and `CONFIRM_QUANTIZATION = True` set by hand; Step 5 was run once |
+| Code | `ef6e9ae` (pipeline from `34fc60e` plus the notebook guards) |
+| Environment | Python 3.13.16, numpy 2.1.3, pandas 2.2.3, scikit-learn 1.6.1; gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 |
+| Float model | `c2-local-v1`, contract SHA-256 `752f6228…`, weights SHA-256 `94e7ab93…` (unchanged) |
+| Data | `pv_fault_dataset.csv`, SHA-256 `5fbb9347…`, split `runwise-v1`. **TRAINING window only**: 3,000 rows, 2,924 status-OK rows for calibration and comparison, 76 skipped (`LUX_SATURATED`). OPERATION rows were dropped on loading (`operation_window_used: false`) |
+| Float32 device preprocessing | gate status identical to the float64 pipeline on all 3,000 rows; largest z difference 3.0×10⁻⁶ |
+| Scales | A_x = 4.488935, s_x = 0.03534594, s_W1 = 0.01053759, s_W2 = 0.00879529, A_z1 = 6.152358, s_z1 = 0.04844377, s_h = 1/127; M1 = 2113405489, SH1 = 38 |
+| Accumulator bounds | \|acc1\| ≤ 71,507, \|acc2\| ≤ 165,764 (int32 limit 2,147,483,647) |
+| Clipping on TRAINING | 0 input clips, 0 tanh lookup clips |
+
+**INT8 vs float reference (2,924 TRAINING rows):** agreement 1.000, 0 changed predictions, 0 changes involving OPEN_CIRCUIT or SHORT_CIRCUIT in either direction, training-fit macro-F1 1.000 for both (drop 0.000). The Float32 device path also agrees on every row.
+
+**Golden vectors:** 100 `TRAINING_DERIVED` inputs and 5 reference probes; 50 `SYNTHETIC_PROTOTYPE_FROM_TRAINING_MEDIANS` and 73 `SYNTHETIC_EDGE_CASE` raw readings covering all four gate outcomes; 151 shift, 28 input-quantisation, 6 argmax and 21 core arithmetic vectors. No raw case was excluded from the exact-label check.
+
+**Host C tests (Colab):** compiled with the flags in section 5 and run: **ALL PASSED 2920**. The same headers and golden vectors were compiled and run again locally after download (2,920 passed), and the three headers were regenerated from the committed contract and `quant_params.json` byte for byte.
+
+**Acceptance (section 6):** all four checks passed, so INT8 is a deployment **candidate** alongside Float32.
+
+**How to read these results:**
+- **100% agreement is not independent model accuracy.** It shows that the INT8 version reproduces the Float32 model's decisions on the rows the model was trained on, where every prediction has a wide margin. It says nothing new about how well the model classifies faults; the only independent result is the Phase 9 OPERATION evaluation of the Float32 model (`OPERATION_RESULTS.md`). INT8 was not evaluated on OPERATION.
+- **Host C tests are not ESP32 tests.** They ran on x86-64 Linux with glibc. They show that the portable C code computes the same results as Python. They do not measure ESP32 behaviour, flash, RAM, latency or energy, and do not cover the ESP32 compiler, its math library or its floating-point settings.
+- **No electrical safety claim.** OPEN/SHORT outputs remain unconfirmed ML predictions, and no relay isolation is implemented.
+- **The deployment choice is still open.** ARCHITECTURE §9.1 chooses INT8 only with a measured on-device benefit; otherwise Float32 is used.

@@ -25,7 +25,7 @@ must stay compatible with Member 3's federated learning and Member 4's digital t
 | Final model trained in Colab (`models/`, run record in `docs/TRAINING_EXPORT.md` §10) | done; artifacts verified (commit `9a641d5`, seed 0, 2,924 TRAINING rows, weights SHA-256 `94e7ab93…`) |
 | Independent OPERATION evaluation code and protocol (`holdout.py`, `docs/OPERATION_EVAL.md`, `notebooks/colab_operation_eval.ipynb`) | done; protocol fixed before the run (`a2a85d6`) |
 | Independent OPERATION evaluation results (`docs/OPERATION_RESULTS.md`, `results/operation_eval.*`) | done; evaluated once on the dataset: accuracy 0.979, macro-F1 0.978 (95% CI 0.937–0.999), OPEN/SHORT 0 false and 0 missed; DUST weakest (`SITE-C-DUS-06`). Not hardware or field validation |
-| INT8 quantisation code (`quantize.py`, `device_reference.py`, `golden.py`, `codegen.py`, `firmware/pv_fault/`, `docs/QUANTIZATION.md`, `notebooks/colab_quantization.ipynb`) | code ready; official quantisation run (TRAINING only) pending |
+| INT8 quantisation code (`quantize.py`, `device_reference.py`, `golden.py`, `codegen.py`, `firmware/pv_fault/`, `docs/QUANTIZATION.md`, `notebooks/colab_quantization.ipynb`) | done; official TRAINING-only run committed (`docs/QUANTIZATION.md` §12): INT8 agrees with Float32 on all 2,924 TRAINING rows, host C tests 2,920 passed, INT8 accepted as a candidate. Not independent accuracy; no ESP32 measurement |
 | ESP32 deployment and on-device measurement, FL integration | not started |
 
 Colab (scikit-learn 1.6.1) and local (1.9.1) gave identical splits and features. The

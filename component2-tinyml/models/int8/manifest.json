@@ -1,0 +1,14 @@
+{
+ "contract_sha256": "752f62285cca62b59a629686fd5b941b748a811c78808751c04595ee3452cb2a",
+ "files": {
+  "firmware/pv_fault/generated/pv_feature_params.h": "792d047c8112a5ea01e79f72fac9e1ee741673d3f7af1dd2e91bdc8c7926002e",
+  "firmware/pv_fault/generated/pv_model_f32.h": "b8b51faa47c4be610cdd5674bba5d02e73b8f3363a1ac56f1fd77a4f9f789b37",
+  "firmware/pv_fault/generated/pv_model_int8.h": "01cd31b79be15d19686901ef72858f43875f138d8a683413603977c6ec380f46",
+  "models/int8/quant_params.json": "5daa66d21098b20845ea7b9d9d891a7a43fb62fd4d225b9b348936f5de62ab25",
+  "tests/host_c/golden_vectors.h": "8035f13ac8e1a622a882417996e325ef465c2d1cfb9589ff724135033f7b2612"
+ },
+ "kind": "INT8_DEPLOYMENT_DERIVATIVE",
+ "quant_params_sha256": "5daa66d21098b20845ea7b9d9d891a7a43fb62fd4d225b9b348936f5de62ab25",
+ "quant_version": "int8-v1",
+ "weights_sha256": "94e7ab9384a1906ec2cf0d3176b435e700f15cd99552fbc6c71519c648ecc3a7"
+}

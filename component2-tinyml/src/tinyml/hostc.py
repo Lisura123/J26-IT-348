@@ -1,6 +1,7 @@
 """Compile and run the host C tests (gcc) for the portable firmware."""
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,9 +27,15 @@ def compile_and_run(gen_dir, golden_dir=None, out_dir=None, sanitize=True, test_
     out = Path(out_dir or gen_dir)
     exe = out / "pv_host_test"
     flags = CFLAGS + (SANITIZE if sanitize else [])
-    cmd = [cc, *flags, f"-I{gen_dir}", f"-I{golden_dir or gen_dir}", f"-I{FIRMWARE}",
-           *[str(FIRMWARE / s) for s in SOURCES], str(test_source), "-lm", "-o", str(exe)]
-    build = subprocess.run(cmd, capture_output=True, text=True)
+    # A quoted #include is searched first in the including file's own folder, so the
+    # test source is compiled from an empty temporary folder: golden_vectors.h then
+    # comes only from golden_dir, never from a copy that sits next to test_main.c.
+    with tempfile.TemporaryDirectory() as build_dir:
+        src = Path(build_dir) / Path(test_source).name
+        shutil.copyfile(test_source, src)
+        cmd = [cc, *flags, f"-I{gen_dir}", f"-I{golden_dir or gen_dir}", f"-I{FIRMWARE}",
+               *[str(FIRMWARE / s) for s in SOURCES], str(src), "-lm", "-o", str(exe)]
+        build = subprocess.run(cmd, capture_output=True, text=True)
     version = subprocess.run([cc, "--version"], capture_output=True, text=True).stdout.splitlines()[0]
     if build.returncode != 0:
         return {"ran": False, "passed": False, "compiler": version, "flags": flags,
