@@ -234,7 +234,9 @@ def write_documents(
         if not success:
             clean_err = scrub_secrets(str(last_err))
             print(f"Error: bulk_write failed for {collection_name} chunk {i}-{i+len(chunk)}: {clean_err}", file=sys.stderr)
-            raise last_err
+            if last_err is not None:
+                raise last_err
+            raise RuntimeError(f"bulk_write failed for {collection_name} chunk {i}-{i+len(chunk)}")
 
         written += len(chunk)
         if write_pause > 0.0:

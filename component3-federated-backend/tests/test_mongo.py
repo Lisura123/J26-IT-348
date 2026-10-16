@@ -226,6 +226,20 @@ def test_batch_chunking_and_transient_retry(monkeypatch):
     assert fake_col.bulk_write.call_count == 4
 
 
+def test_write_documents_retries_exhausted_raises(monkeypatch):
+    """write_documents raises when transient error persists past max_retries."""
+    fake_col = MagicMock()
+    fake_col.bulk_write.side_effect = AutoReconnect("connection reset by peer")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    docs = [{"run_id": "shared", "update_id": "U1"}]
+    with pytest.raises(AutoReconnect) as exc:
+        write_documents(fake_col, "fl_client_updates", docs, batch_size=5, max_retries=2)
+    assert "connection reset by peer" in str(exc.value)
+    # attempt 0 + 2 retries = 3 calls
+    assert fake_col.bulk_write.call_count == 3
+
+
 # ============================================================================
 # 7. READ ERROR HANDLING AND EXIT CODE 2
 # ============================================================================
