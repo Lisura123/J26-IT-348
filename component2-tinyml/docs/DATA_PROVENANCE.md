@@ -59,7 +59,7 @@ To check a local copy: `sha256sum pv_fault_dataset.csv` (Linux/macOS) or `certut
 
 Other columns: `record_id`, `timestamp_utc`, `site_id`, `device_id`, `panel_id`, `reading` (identifiers); `window`, `run_id`, `label` (metadata); `health_score` (score from Component 1; **excluded from model inputs**, §7.3).
 
-The sensor part numbers, ADC resolution and calibration are **not documented in the repository** (§9).
+Sensor part numbers were **stated by Member 1** on 2026-10-16: INA219 (panel voltage and current), TEMT6000 (light), DS18B20 probe 1 (ambient temperature), DS18B20 probe 2 (panel temperature), Sharp GP2Y10 (dust). This is not yet backed by firmware, wiring or logs in the repository. ADC resolution and calibration are **not documented** (§9). The stated list has **one** panel probe, while the dataset has two panel temperature columns; whether the dataset was recorded with this hardware is unresolved (§10, question 11). Compatibility with the model inputs: `ARCHITECTURE.md` §7.6.
 
 ---
 
@@ -150,7 +150,10 @@ Four sites do not cover every class. This limits leave-one-site-out evaluation (
 |---|---|---|
 | Lux values above 65,535 lx (1,283 rows); 76 rows at exactly 100,000 lx | validation report | if the lux sensor is a BH1750 (max 65,535 lx), values above that cannot come from it directly. Saturated readings make irradiance-normalised features unreliable → `SKIPPED_LUX_SATURATED` (`ARCHITECTURE.md` §5) |
 | Lux → irradiance uses a fixed factor (lux / 120) | group data contract | approximation; spectrum- and sensor-dependent |
-| Sensor models, ADC resolution, calibration undocumented | no firmware in the repository | feature thresholds and saturation limits are placeholders |
+| Sensor models stated (§3), ADC resolution and calibration undocumented | no firmware in the repository | feature thresholds and saturation limits are placeholders |
+| Stated hardware has one panel temperature probe; the dataset has two | Member 1's sensor list vs dataset columns | the model's `temp_spread` input cannot be measured on that hardware (`ARCHITECTURE.md` §7.6.3) |
+| TEMT6000 is an analogue light sensor; its lux conversion and range are unknown | stated sensor list; no calibration in the repository | a typical breakout may saturate far below the TRAINING lux range (estimate, `ARCHITECTURE.md` §7.6.4) |
+| GP2Y10 measures airborne dust, not panel soiling; NORMAL median `dust_vo_v` is 0.141 V (TRAINING), below a typical clean-air output | stated sensor list; TRAINING data | meaning of the DUST class on real hardware unresolved (`ARCHITECTURE.md` §7.6.5) |
 | Panel datasheet values are marked "ASSUMED" | `panel_datasheet.csv` (component 4) | physical range limits in `validate.py` are approximate |
 | No wind sensor | group data contract | not used by Component 2 |
 
@@ -167,7 +170,8 @@ Four sites do not cover every class. This limits leave-one-site-out evaluation (
 | ESP32 firmware source | **not in the repository** |
 | Raw sensor logs (serial/MQTT, with receive timestamps) | **not in the repository** |
 | Experiment records per run (date, panel, condition, setup, photos) | **not in the repository** |
-| Sensor part numbers and wiring | **not documented** |
+| Sensor part numbers | **stated by Member 1** (§3); not documented in the repository |
+| Wiring, pin mapping, calibration equations | **not documented** |
 
 Observations from the validation that the evidence above should explain:
 - All intra-run intervals are exactly 5 s, all 100 runs start at second :00, and every run has exactly 60 readings.
@@ -192,5 +196,8 @@ Until this is resolved, results obtained with this dataset are reported as resul
 8. **`sites.csv`:** what do the `mix_*` columns represent?
 9. **`health_score`:** is it the output of Component 1's grading, and how was it computed for these rows?
 10. **Data contract:** can `docs/DATA_CONTRACT.md` be updated to describe how the shared dataset was collected?
+
+11. **Hardware vs dataset:** the stated hardware has one panel temperature probe, but the dataset has `panel_temp1_c` and `panel_temp2_c`. Was the dataset recorded with this hardware? Where does `panel_temp2_c` come from?
+12. **ESP32 integration:** board model, toolchain, pin mapping, TEMT6000 lux equation, GP2Y10 voltage handling, INA219 calibration, a second panel probe, sampling interval and sample raw logs. The full list is in `ARCHITECTURE.md` §7.6.9.
 
 When answers or evidence arrive, this document is updated: add the evidence to §9, mark questions as answered, and change the status line at the top.

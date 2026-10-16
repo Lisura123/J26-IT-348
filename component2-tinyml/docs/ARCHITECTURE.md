@@ -173,6 +173,8 @@ Weight layout `W1 (8,16), b1, W2 (16,5), b2` matches `component3-…/src/mlp.py 
 | `dust_vo_v` | float | V | yes |
 | `humidity_pct`, `pressure_hpa` | float | %, hPa | no (not used by the model) |
 
+How these eight model inputs map to Member 1's actual sensors, and what still blocks real-sensor integration, is documented in §7.6. The input contract above is unchanged.
+
 ### 7.2 Model contract file: `models/model_contract.json`
 
 > **⚠ SCHEMA EXAMPLE ONLY. NO VALUE BELOW IS A TRAINED PARAMETER.**
@@ -249,6 +251,128 @@ Skipped readings are counted and reported in evaluation (coverage = classified /
 - Reconnection only on manual reset; no automatic reconnection.
 - ML-only labels (DUST, SHADING) never trigger isolation.
 - Until confirmed, Component 2 outputs only `relay_recommendation` (advisory). Hardware-level protection, if any, remains Member 1's responsibility.
+
+
+### 7.6 Hardware sensor compatibility (ESP32 integration, Step 0)
+
+**Status:** documentation only (2026-10-16). No firmware integration, no change to the model, features, normalisation, thresholds or INT8 parameters. The frozen contract and its eight raw inputs (§7.1) stay as they are.
+
+**Evidence levels used below:**
+- **Verified:** checked in this repository or computed from the TRAINING window of the dataset.
+- **Stated:** told to Member 2 by Member 1; not yet backed by firmware, wiring or logs in the repository.
+- **Estimate:** typical datasheet behaviour; must be measured on Member 1's hardware.
+- **Unresolved:** unknown until Member 1 provides the information in §7.6.9.
+
+#### 7.6.1 Sensor configuration (Stated by Member 1)
+
+| Measurement | Sensor |
+|---|---|
+| Panel voltage and current | INA219 |
+| Light intensity | TEMT6000 (analogue) |
+| Ambient (air) temperature | DS18B20 probe 1 |
+| Panel temperature | DS18B20 probe 2 |
+| Dust | Sharp GP2Y10 (analogue) |
+
+#### 7.6.2 Mapping of the eight raw model inputs
+
+| Raw model input (§7.1) | Unit | Source on Member 1's hardware | Status |
+|---|---|---|---|
+| `voltage_v` | V | INA219 bus voltage | available; limits and calibration to confirm |
+| `current_ma` | mA | INA219 current (shunt + calibration register) | available; resolution to confirm (§7.6.6) |
+| `power_mw` | mW | computed: `voltage_v × current_ma` (§7.6.6) | available by calculation |
+| `panel_temp1_c` | °C | DS18B20 probe 2 (panel) | available |
+| `panel_temp2_c` | °C | **none** | **missing** (§7.6.3) |
+| `ambient_temp_c` | °C | DS18B20 probe 1 (air) | available |
+| `irradiance_lux` | lx | TEMT6000 via ESP32 ADC | **range and lux calibration unresolved** (§7.6.4) |
+| `dust_vo_v` | V | GP2Y10 via ESP32 ADC | **meaning and calibration unresolved** (§7.6.5) |
+
+`humidity_pct` and `pressure_hpa` are not model inputs and are not needed. (Verified: Member 1's own code still expects three temperatures plus humidity and pressure, `component1-sensing-grading/src/backend_writer.py:17-19`, which does not match the stated five-sensor list.)
+
+#### 7.6.3 Missing second panel temperature probe
+
+- The model needs **two panel temperatures** and one ambient temperature: `temp_spread = |T1 − T2|` and `temp_rise = (T1 + T2)/2 − T_amb` (§5). The stated hardware has **one** panel probe and one air probe.
+- **Verified (TRAINING window):** median `temp_spread` is **2.1 °C for PARTIAL_SHADING** and 0.49–0.64 °C for every other class; `temp_spread` has the largest mean absolute first-layer weight of the eight inputs (0.527). It is the model's main shading signal.
+- **Copying one panel reading into both inputs is not acceptable.** It would make `temp_spread` exactly 0 for every reading, a value outside what the model saw for shading. PARTIAL_SHADING would then be detected poorly or not at all, **without any error or warning**, because the inputs still look valid. It would also silently change what an input means, which this project only allows as a new, separately approved model version. (Verified: Member 1's `data_quality.py:39-40` fills a missing panel temperature from the other one; that behaviour must not be used to feed this model.)
+- **Options:**
+  1. **Member 1 adds a second DS18B20 on the panel surface** (a different spot on the same panel; same 1-Wire bus). The frozen model is used unchanged. **Recommended.**
+  2. Copy one probe into both inputs. **Rejected** (above).
+  3. A new model version without `temp_spread`. Needs retraining, a new evaluation and agreement with Member 3 (it changes the 229-parameter FL layout or the meaning of an input). OPERATION has already been used once, so such a model would have no untouched held-out test. Only as a separate phase with explicit approval.
+
+#### 7.6.4 TEMT6000 range and lux calibration
+
+- **Verified:** the model uses irradiance in lux (kilolux in `ln(klx)` for V_ref and as the divisor of `i_norm`, `p_norm`). TRAINING lux values range from **4,878 to 100,000 lx**. The quality gates skip readings below **2,400 lx** (LOW_LIGHT) and at or above **100,000 lx** (LUX_SATURATED); both thresholds are placeholders (`FEATURES.md`).
+- **Estimate:** the TEMT6000 is an analogue phototransistor whose current is roughly proportional to illuminance (datasheet typical about 10 µA at 20 lx, i.e. about 0.5 µA per lux). With the common 10 kΩ load on breakout boards, the output would reach about 3.3 V near **~660 lx**. If the hardware is wired like this, almost every daylight reading would read near full scale and be far below the TRAINING range; converted with a wrong factor, readings would fall under the 2,400 lx gate (**nothing classified**) or saturate.
+- **Verified:** Member 1's `entropy_weighting.py:18` converts lux to W/m² with `lux / 120`. Component 2 does not use that conversion; it needs true lux.
+- **Unresolved:** load resistor, ADC pin and attenuation, the voltage-to-lux equation (checked against a reference lux meter), and the saturation point. If the sensor cannot cover daylight, a different load resistor or light sensor is a hardware decision for Member 1. The gate thresholds are **not** changed without approval.
+
+#### 7.6.5 GP2Y10 dust sensor: airborne dust versus panel soiling
+
+- **Estimate (datasheet behaviour):** the GP2Y10 is an optical sensor for **particles in the air passing through its opening**. Its IR LED is pulsed (typically 0.32 ms every 10 ms) and the output is sampled about 0.28 ms after the pulse starts. With a 5 V supply the output can exceed the ESP32's 3.3 V ADC range, so a voltage divider is usually needed and must be undone in software. A typical clean-air output is roughly 0.6–0.9 V.
+- **Limitation:** it does **not** measure dust lying on the panel glass. The DUST class only transfers to the hardware if the sensor is mounted and read the same way as when the dataset was recorded.
+- **Verified (TRAINING window):** median `dust_vo_v` is **0.141 V for NORMAL** and 0.920 V for DUST. A NORMAL value of 0.14 V is below the typical clean-air output above, so the dataset values may have an offset removed or a divider applied, or may not be raw GP2Y10 voltages.
+- **Unresolved:** how `dust_vo_v` is calculated (offset, divider, averaging), sampling timing, mounting position. The quality gate accepts 0–3.3 V.
+
+#### 7.6.6 INA219 voltage, current and power
+
+- **Verified:** in the dataset `power_mw = voltage_v × current_ma` to within 0.084 mW on every TRAINING row (`DATA_PROVENANCE.md` §3); Member 1's `kalman_filter.py:70` uses the same formula. **The device must compute `power_mw = voltage_v * current_ma`** (V × mA = mW) from the same INA219 sample, not use the INA219 power register, which has a coarser scale.
+- **Verified (TRAINING medians):** OPEN_CIRCUIT current **0.105 mA** (voltage 3.258 V); SHORT_CIRCUIT voltage **0.062 V** (current 88.1 mA). The INA219 calibration must resolve these: a current resolution of about **0.1 mA or finer**, which depends on the shunt resistor and calibration register.
+- **Verified (gates):** physical limits are 0–4 V, 0–250 mA and 0–700 mW (`validate.py`, from an ASSUMED panel datasheet). A negative current (reverse flow) is below 0 mA and is gated as INVALID_INPUT.
+- **Unresolved:** shunt value, calibration register, current LSB, bus-voltage range, high-side wiring.
+
+#### 7.6.7 Missing values, quality gates and sensor validity
+
+Already implemented and unchanged (`features.py`, `firmware/pv_fault/pv_fault.c`):
+- NaN or ±inf in any input, a DS18B20 error code (−127, −999) in a panel temperature, or a value outside the physical limits gives **INVALID_INPUT**. Precedence: INVALID_INPUT > LUX_SATURATED > LOW_LIGHT > OK.
+- A skipped reading gets a status and **no label**; it is never reported as NORMAL.
+
+Requirements for Member 1's future **sensor adapter** (the code that turns raw sensor readings into the eight physical values; not part of the model):
+- A missing or failed reading must be passed as **NaN**, never as 0. A zero voltage or current looks like a fault.
+- **DS18B20 power-on value 85.0 °C:** the sensor reports 85.0 °C before its first conversion. 85.0 °C equals the upper panel-temperature limit, so the current gate **accepts** it (Verified). The adapter must discard the first conversion after power-up or reset, or report such a value as NaN.
+- An ADC reading at full scale (TEMT6000, GP2Y10) must be reported as saturated or NaN, not converted to a number.
+- The adapter delivers physical units in the §7.1 order: V, mA, mW (= V × mA), °C, °C, °C, lx, V.
+- The gates in the model stay as they are; any change to thresholds needs explicit approval.
+
+#### 7.6.8 Issues that block real-sensor integration
+
+| # | Issue | Blocks | Why |
+|---|---|---|---|
+| A | No second panel temperature probe | **yes** | `temp_spread` cannot be measured; copying is rejected (§7.6.3) |
+| B | TEMT6000 range and lux conversion unknown | **yes** | with a typical 10 kΩ breakout, readings may not reach the TRAINING lux range, and most readings could be skipped (§7.6.4) |
+| C | GP2Y10 measures airborne dust; `dust_vo_v` definition unknown | yes for DUST results | DUST predictions may not mean panel soiling (§7.6.5) |
+| D | DS18B20 85.0 °C power-on value passes the gate | no (adapter requirement) | handled in the sensor adapter (§7.6.7) |
+| E | ESP32 ADC limits (nonlinearity, 3.3 V full scale, ADC2 unusable while Wi-Fi is on) | calibration | affects B and C |
+| F | INA219 current resolution for OPEN_CIRCUIT (~0.1 mA) | calibration | must be configured (§7.6.6) |
+| G | ESP32 board unknown (floating-point unit or not) | benchmarking only | Float32 vs INT8 choice (§9.1) |
+
+Benchmarking the C library on the board (flash, RAM, latency, golden-vector consistency) does **not** need the sensors and is not blocked by A–C; it needs only the board details in §7.6.9.
+
+#### 7.6.9 Information required from Member 1
+
+1. **Board:** exact ESP32 module (for example ESP32-WROOM-32, ESP32-S3, ESP32-C3), CPU frequency, flash and PSRAM size, floating-point unit yes/no.
+2. **Toolchain and firmware:** ESP-IDF or Arduino version, compiler version, the existing firmware source (ideally committed to `component1-sensing-grading`), its task structure and free RAM/flash.
+3. **Pin mapping and power:** I²C pins (INA219), 1-Wire pin (DS18B20), ADC pins (TEMT6000, GP2Y10; ADC1 only), GP2Y10 LED pin, 3.3 V / 5 V supplies, divider ratios.
+4. **Temperature:** a second panel DS18B20 (yes/no), mounting positions of all probes, DS18B20 resolution and conversion time.
+5. **TEMT6000:** load resistor, ADC attenuation, voltage-to-lux equation checked against a reference lux meter, saturation point.
+6. **GP2Y10:** supply voltage, divider, LED pulse timing, offset handling, averaging, mounting position, and how `dust_vo_v` in the dataset was calculated.
+7. **INA219:** shunt resistor, calibration register, current LSB, bus-voltage range, wiring (high side).
+8. **Sampling:** reading interval (the model assumes one reading every 5 s) and how a reading is assembled.
+9. **Sample readings:** raw logs with timestamps for normal, shading, dust, open circuit, short circuit, low light and a sensor fault. Used only to compare value ranges with the TRAINING data; nothing is tuned on them without approval.
+10. **Dataset link:** whether `pv_fault_dataset.csv` was recorded with this hardware (`DATA_PROVENANCE.md` §10).
+
+#### 7.6.10 Proposed shadow-mode architecture (no actuation)
+
+```
+Member 1 firmware: drivers, timing, calibration        Component 2: frozen, generated C (unchanged)
+INA219, TEMT6000, DS18B20 x2 (+1 needed), GP2Y10        firmware/pv_fault/*.c + generated/*.h
+  -> sensor adapter: physical units, NaN if invalid  ->  pv_classify_f32() or pv_classify_int8()
+     raw[8] = V, mA, mW (= V x mA), degC x3, lx, V          gates -> features -> MLP -> pv_result_t
+  -> prediction message to the backend / log only          (status, label or none, prob[5], confidence)
+```
+
+- **Shadow mode:** predictions are only logged and sent to the backend. Nothing is switched, and **no relay or actuator code is added** (§7.5 stays a proposal).
+- Component 2 provides the portable C library as an ESP-IDF component; a build switch selects the Float32 or INT8 path, and both can be linked for benchmarking. Builds use `-ffp-contract=off` (`QUANTIZATION.md` §5).
+- Member 1 owns the drivers, calibration and the sensor adapter. Generated headers and model files are never edited by hand.
+- Order of work, each step separately approved: (1) on-board golden-vector test and benchmark without sensors; (2) agree the sensor-adapter interface; (3) shadow-mode run with real readings once A and B are resolved; (4) Float32/INT8 choice from measurements (§9.1).
 
 ---
 
@@ -391,7 +515,9 @@ component2-tinyml/
 | R2 | **Task too easy on current data** (rules ≈ 97–98%) | weak justification for ML; must be addressed in the thesis | Member 2 |
 | R3 | **Activation mismatch** (Member 3 tanh, Member 4 ReLU), see §6.4 | silent wrong predictions/SHAP in the twin | Members 3/4; contract field proposed |
 | R4 | **Feature change needs Member 3 agreement** (same dimension, new meaning + scaler) | FL trains the wrong function if not aligned | Members 2/3 |
-| R5 | **Sensor models unknown** (lux > 65,535 in data) | feature formulas, saturation and low-light thresholds may be wrong | Member 1 |
+| R5 | **Sensor models stated, calibration unknown** (INA219, TEMT6000, DS18B20 ×2, GP2Y10; §7.6). Lux conversion, dust-voltage definition and INA219 calibration are not documented | feature formulas, saturation and low-light thresholds may not fit the hardware | Member 1 |
+| R13 | **No second panel temperature probe** on the stated hardware (§7.6.3); the model needs two panel temperatures for `temp_spread` | blocks real-sensor use of the frozen model; copying one probe is rejected | Member 1 (hardware); any model change needs approval |
+| R14 | **TEMT6000 range** may end far below daylight with a typical 10 kΩ breakout (estimate, §7.6.4) | most readings could be skipped or out of the TRAINING range | Member 1 |
 | R6 | **Relay hardware, protection requirements and ownership unknown**; safe time-to-isolate unknown | relay stays a proposal; no actuation code | Member 1 |
 | R11 | Pruning in the original proposal is not adopted for deployment (§9.2) | must be justified to the supervisor | Member 2 |
 | R12 | Skipped readings (low light, saturation) reduce coverage | dashboard has gaps at dawn/dusk | report coverage; tune `g_min` |
