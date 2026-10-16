@@ -1,0 +1,7 @@
+site_id,device_id,panel_id,mix_normal,mix_partial_shading,mix_dust,mix_open_circuit,mix_short_circuit,display_name,display_timezone,protocol,transport,gateway_id,link_profile
+SITE-A,ESP32-A01,PV-A01,0.45,0.25,0.15,0.1,0.05,Pilot site A,Asia/Colombo,WIFI,MQTT/TCP,GW-01,strong
+SITE-B,ESP32-B01,PV-B01,0.4,0.05,0.4,0.1,0.05,Pilot site B,Asia/Colombo,WIFI,MQTT/TCP,GW-01,strong
+SITE-C,ESP32-C01,PV-C01,0.35,0.15,0.1,0.25,0.15,Pilot site C,Asia/Colombo,LORA,LoRa P2P -> gateway -> MQTT,GW-02,medium
+SITE-D,ESP32-D01,PV-D01,0.5,0.3,0.05,0.05,0.1,Pilot site D,Asia/Colombo,LTE,MQTT/TCP over 4G,CELL,variable
+SITE-E,ESP32-E01,PV-E01,0.3,0.1,0.2,0.1,0.3,Pilot site E,Asia/Colombo,LORA,LoRa P2P -> gateway -> MQTT,GW-02,weak
+SITE-F,ESP32-F01,PV-F01,0.4,0.2,0.2,0.15,0.05,Pilot site F,Asia/Colombo,WIFI,MQTT/TCP,GW-01,weak

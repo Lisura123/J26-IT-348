@@ -1,0 +1,13 @@
+# Eclipse Mosquitto 2.x configuration for project-backend
+# Port 1883 for plain MQTT
+listener 1883 0.0.0.0
+
+# Allow anonymous access for local academic development
+# To enable password protection in production:
+# 1. Set allow_anonymous false
+# 2. Generate password file: mosquitto_passwd -c /mosquitto/config/passwd <username>
+# 3. Add password_file /mosquitto/config/passwd
+allow_anonymous true
+
+# Persistence disabled: ephemeral broker for live streaming
+persistence false
