@@ -78,6 +78,7 @@ Retrieves raw time-series points or time-window bucket aggregations.
   - Maximum query range between `start` and `stop` is **31 days** (else `422`).
   - Without `every`, raw points up to `limit` are returned.
   - If `every` is provided, `fn` must also be provided.
+  - **Time Bucket Alignment**: In `/api/v1/query/series` with `every=...`, each point's time is the START of its UTC bucket (for example daily means are labeled `00:00:00Z` of that day). The last bucket can be partial when `stop` falls inside it.
 - **Response Format**:
 ```json
 {

@@ -61,7 +61,7 @@ if __name__ == "__main__":
         print(f"{r:5d} {n:2d} {int(global_csv.loc[r,'total_samples']):12d}  "
               f"{e_i:14.1e}  {e_f:15.1e}  {e_fi:13.1e}{flag}")
 
-    # Save each shared version as JSON (weights stay out of InfluxDB)
+    # Save each shared version as JSON (weights stay out of the database)
     for ver, w in history.items():
         with open(MODELS_DIR / f"global_{ver}.json", "w", encoding="utf-8") as f:
             json.dump({"version": ver, "weights": w}, f)

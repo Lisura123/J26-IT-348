@@ -1,6 +1,6 @@
 # Project Backend: Solar PV IoT Ingestion & Time-Series Engine
 
-Robust, contract-governed ingestion pipeline and time-series query service for the Solar PV Monitoring Platform (J26-IT-348). Supports real-time MQTT telemetry, high-throughput batch HTTP ingestion, dynamic schema validation, and dashboard querying over **MongoDB Atlas**. Runs entirely natively on Windows. Docker is not used by this project.
+Robust, contract-governed ingestion pipeline and time-series query service for the Solar PV Monitoring Platform (J26-IT-348). Supports real-time MQTT telemetry, high-throughput batch HTTP ingestion, dynamic schema validation, and dashboard querying over **MongoDB Atlas**. Runs entirely natively on Windows.
 
 ---
 
@@ -76,7 +76,7 @@ project-backend/
 ├── .env.example               # Environment template with MongoDB Atlas variables (no secrets)
 ├── .gitignore                 # Git ignore rules (includes .env, .dev-pids, rejects.jsonl)
 ├── pytest.ini                 # Pytest test discovery settings
-├── requirements.txt           # Python dependencies (includes pymongo; influxdb-client removed)
+├── requirements.txt           # Python dependencies (pymongo, dnspython, etc.)
 ├── schema.yaml                # Stream data contracts & reserved measurements definition
 ├── backend/
 │   ├── check_file.py          # Offline dataset contract validator
@@ -216,7 +216,17 @@ In `backend/storage.py`, `build_role_uri(base_uri, role="reader")` derives the r
 
 ---
 
-## 6. Service Health API (`/health`)
+## 6. Dashboard Read API (`/api/v1/query/*`)
+
+The dashboard connects to read-only endpoints authenticated via `X-API-Key: <ASK_MEMBER_3_PRIVATELY>`:
+- `GET /api/v1/sites`: Lists canonical site metadata from `reference/sites.csv`.
+- `GET /api/v1/query/latest`: Returns the latest telemetry reading for a given `stream` and `site_id`.
+- `GET /api/v1/query/series`: Retrieves time-series points or aggregated windows (`every=1m|5m|15m|1h|1d`, `fn=mean|min|max|last|count`).
+  > **Note on Series Aggregation:** In `/api/v1/query/series` with `every=...`, each point's time is the START of its UTC bucket (for example daily means are labeled `00:00:00Z` of that day). The last bucket can be partial when `stop` falls inside it.
+
+---
+
+## 7. Service Health API (`/health`)
 
 The health endpoint provides real-time verification of backend status and Atlas connectivity without requiring authentication:
 
@@ -244,11 +254,11 @@ Host: localhost:8000
 - `storage`: Always `"mongodb"`.
 - `connected`: `true` when MongoDB Atlas ping succeeds, `false` otherwise.
 - `counters`: Real-time operational counters from the ingestion pipeline.
-*(Note: `influx_connected`, `mongo_connected`, and `database_connected` have been removed in favor of `connected`.)*
+*(Note: Legacy status flags have been unified into `connected`.)*
 
 ---
 
-## 7. MongoDB Atlas Troubleshooting
+## 8. MongoDB Atlas Troubleshooting
 
 | Issue / Error | Root Cause | Solution |
 | :--- | :--- | :--- |
@@ -259,7 +269,7 @@ Host: localhost:8000
 
 ---
 
-## 8. Verifying Connectivity Without Printing Secrets
+## 9. Verifying Connectivity Without Printing Secrets
 
 To verify that your MongoDB Atlas cluster is reachable from Windows without logging or exposing connection strings or passwords, run:
 
@@ -269,20 +279,20 @@ To verify that your MongoDB Atlas cluster is reachable from Windows without logg
 
 ---
 
-## 9. Changelog
+## 10. Changelog
 
 - **Stage 1**: Pure Python contract validation, canonical sites registry, strict/open stream validation.
 - **Stage 2**: Ingestion pipeline, MQTT service (QoS 1), FastAPI ingest endpoints, rotating rejects logger.
 - **Stage 3**: Read API (`/sites`, `/query/latest`, `/query/series`) with CORS and injection guards, replay and verify tools.
 - **Stage 4**: Handover documentation and dev scripts.
 - **Stage M1 (MongoDB Atlas Migration & Hardening)**:
-  - Replaced InfluxDB with MongoDB Atlas cloud database (`pymongo>=4.6.0`, `dnspython`).
+  - Migrated to MongoDB Atlas cloud database (`pymongo>=4.6.0`, `dnspython`).
   - Implemented `backend/storage.py` with Atlas timeouts (`serverSelectionTimeoutMS=10000`, `connectTimeoutMS=10000`, `socketTimeoutMS=60000`, `retryWrites=true`).
   - Added role-based reader account URI derivation in `build_role_uri` without exposing credentials.
   - Implemented batch chunking (`MONGO_WRITE_BATCH`, default 100), pause (`MONGO_WRITE_PAUSE_S`), and exponential backoff retry on transient errors in `MongoWriter`.
   - Added throughput reporting (rows/s) and estimated duration calculation in `replay.py`.
-  - Updated `/health` endpoint to return `{"status": "ok"|"degraded", "storage": "mongodb", "connected": bool, "counters": {...}}` and removed legacy `*_connected` flags.
+  - Updated `/health` endpoint to return `{"status": "ok"|"degraded", "storage": "mongodb", "connected": bool, "counters": {...}}` and removed legacy status flags.
   - Updated dev scripts: `start_dev.ps1` checks `127.0.0.1:1883` and starts MQTT service conditionally with `.dev-pids` tracking; `stop_dev.ps1` stops strictly by PID and `ParentProcessId` process tree.
-  - Added dataset resolution in tests across `PV_DATASET` env var, `..\pv_fault_dataset.csv`, and `..\component3-federated-backend\data\shared\pv_fault_dataset.csv`.
+  - Added dataset resolution in tests across `PV_DATASET` env var and `..\component3-federated-backend\data\shared\pv_fault_dataset.csv`.
   - Full test suite passing: 108 passed, 1 skipped.
 

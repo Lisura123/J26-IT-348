@@ -53,7 +53,7 @@ The backend includes a hardcoded startup guard: if `MEASUREMENT_PREFIX` is empty
 ### Go-Live Production Switch Procedure
 Only execute when:
 1. Members 1, 2, and 4 have explicitly signed off on their schemas.
-2. `python -m backend.tools.verify_backend --stream readings --file ..\pv_fault_dataset.csv --window OPERATION` returns `OK`.
+2. `python -m backend.tools.verify_backend --stream readings --file ..\component3-federated-backend\data\shared\pv_fault_dataset.csv --window OPERATION` returns `OK`.
 3. All unit tests pass: `pytest -q`.
 
 **Steps to activate production:**
