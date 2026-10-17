@@ -8,7 +8,7 @@ All data is SYNTHETIC. Use it for development and integration, not for final res
 - **IDs:** only the IDs in `shared/sites.csv` (SITE-A…F, ESP32-A01…F01, PV-A01…F01).
 - **Join keys:** `record_id` (one sensor reading), `site_id`, `device_id`, `timestamp_utc`,
   `round_id` / `update_id` (federated learning), `global_model_version`.
-- **InfluxDB:** `site_id`, `device_id`, `protocol` as tags; readings as fields; InfluxDB time = `timestamp_utc`.
+- **Database:** indexed fields `site_id`, `device_id`, `protocol` on every document; readings as fields; the document time is `timestamp_utc` stored as a BSON UTC date.
 
 ## Timeline (UTC)
 | Window | Dates | Used for |
