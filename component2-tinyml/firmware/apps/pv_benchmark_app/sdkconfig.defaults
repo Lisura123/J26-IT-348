@@ -1,0 +1,5 @@
+# No target or board is set here: run `idf.py set-target <chip>` first.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# Fixed CPU frequency during measurement: power management off.
+CONFIG_PM_ENABLE=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

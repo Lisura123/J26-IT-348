@@ -9,3 +9,10 @@ __pycache__/
 # raw datasets stay local (provenance unresolved; see docs/ARCHITECTURE.md)
 data/
 *.csv
+
+# ESP-IDF and CMake build output
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
