@@ -145,12 +145,26 @@ def main():
         confirm_final_test=a.confirm_final_test, dry_run_training=a.dry_run_training)
 
 
+# The committed result of the one-time OPERATION evaluation (Phase 9). While it
+# exists in the checked-out code, the final test refuses to run again: an
+# executed notebook saved with CONFIRM_FINAL_TEST = True clones the latest
+# branch, and its own no-overwrite check only sees an empty Colab /content.
+OFFICIAL_RESULT = ROOT / "results" / "operation_eval.json"
+
+
 def run(data_path, splits_path, model_dir, out_dir, confirm_final_test=False, dry_run_training=False,
-        code_commit=None, **kw):
+        code_commit=None, official_result=OFFICIAL_RESULT, allow_repeat_operation_eval=False, **kw):
     """Evaluate and write the JSON and Markdown report. The final test never
-    overwrites existing results."""
+    overwrites existing results and is refused once the official result is
+    committed (allow_repeat_operation_eval=True would need a separately
+    approved protocol; no notebook passes it)."""
     out = Path(out_dir)
     names = DRY_RUN_NAMES if dry_run_training else FINAL_NAMES
+    if not dry_run_training and official_result is not None and Path(official_result).exists() \
+            and not allow_repeat_operation_eval:
+        raise RuntimeError(f"The one-time OPERATION evaluation is already recorded in {official_result} "
+                           f"(SHA-256 {file_sha256(official_result)}). It is not run again; see "
+                           "docs/OPERATION_RESULTS.md and notebooks/ARCHIVED_RUNS.json.")
     if not dry_run_training:
         existing = [n for n in names if (out / n).exists()]
         if existing:

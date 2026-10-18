@@ -284,7 +284,7 @@ def test_script_final_test_runs_once_and_never_overwrites(tmp_path, df, assignme
     data, splits = _files(tmp_path, df, assignments)
     s = _script()
     out = tmp_path / "results"
-    kw = dict(SYNTH)
+    kw = dict(SYNTH, official_result=tmp_path / "not_yet_recorded.json")   # a checkout before Phase 9
     r, paths = s.run(data, splits, model_dir, out, confirm_final_test=True, code_commit="abc", **kw)
     assert [p.name for p in paths] == ["operation_eval.json", "operation_eval.md"]
     first = paths[0].read_bytes()
@@ -303,3 +303,17 @@ def test_script_dry_run_uses_training_and_is_labelled(tmp_path, df, assignments,
     assert r["status"] == "DRY_RUN_TRAINING_NOT_A_RESULT" and r["window"] == "TRAINING"
     assert [p.name for p in paths] == ["dry_run_training_eval.json", "dry_run_training_eval.md"]
     assert "NOT A RESULT" in paths[1].read_text()
+
+
+def test_script_refuses_to_repeat_the_recorded_operation_evaluation(tmp_path):
+    """The committed Phase 9 result blocks a second OPERATION evaluation before
+    any data is read, also with confirm_final_test=True (as an executed
+    notebook saved with CONFIRM_FINAL_TEST = True would call it)."""
+    s = _script()
+    assert s.OFFICIAL_RESULT == ROOT / "results" / "operation_eval.json" and s.OFFICIAL_RESULT.exists()
+    missing = tmp_path / "no_such_dataset.csv"                     # never opened
+    with pytest.raises(RuntimeError, match="already recorded"):
+        s.run(missing, missing, ROOT / "models", tmp_path / "out", confirm_final_test=True, code_commit="abc")
+    assert not (tmp_path / "out").exists()
+    with pytest.raises(FileNotFoundError):                         # dry run on TRAINING is not blocked
+        s.run(missing, missing, ROOT / "models", tmp_path / "dry", dry_run_training=True, code_commit="abc")

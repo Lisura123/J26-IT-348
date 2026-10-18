@@ -1,0 +1,99 @@
+{
+ "note": "Executed Colab notebooks kept exactly as saved (outputs and settings, including CONFIRM_* = True). Do not use Run all on them. New runs start from a clean template.",
+ "notebooks": [
+  {
+   "documents": "Phase 9 one-time OPERATION evaluation: docs/OPERATION_RESULTS.md, results/operation_eval.json",
+   "has_outputs": true,
+   "official_run_commit": null,
+   "path": "component2-tinyml/notebooks/colab_operation_eval.ipynb",
+   "rerun_effect": "BLOCKED: the notebook clones the latest branch, and scripts/06_evaluate_operation.py refuses the final test while results/operation_eval.json is committed.",
+   "saved_in_commit": "4b5e704c972c468cd975e83450376ce3b743e17e",
+   "settings": {
+    "CONFIRM_FINAL_TEST": true
+   },
+   "sha256": "863afe7054da2ed31229326b104639423d4862d13839f8f237176d32fdac1057",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "d63fae8d1d953beebebd9442af05cf5291eb5780d5603865f637811dc400fdfc"
+  },
+  {
+   "documents": "int8-v1 quantisation run: docs/QUANTIZATION.md section 12, models/int8/, results/quantization_report.*",
+   "has_outputs": true,
+   "official_run_commit": "ef6e9ae9badeeb06b149bc1177d546d014d54ed2",
+   "path": "component2-tinyml/notebooks/colab_quantization.ipynb",
+   "rerun_effect": "NOT BLOCKED: pins ef6e9ae; Run all repeats the deterministic TRAINING-only quantisation into /content/quant_out. Committed artifacts are not changed. Accepted by Member 2.",
+   "saved_in_commit": "9c2f09334d99cf4ecd746a0e24cce3ed94504ef5",
+   "settings": {
+    "APPROVED_COMMIT": "ef6e9ae9badeeb06b149bc1177d546d014d54ed2",
+    "CONFIRM_QUANTIZATION": true
+   },
+   "sha256": "c199fee762443ac4655aff48de0575b3bc4a8d57f224faae0e75841d3cda9a9d",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "ad225b957de144c4efd738bbf1c2bbadb1ed16b046df7ce2b14007befefc50a4"
+  },
+  {
+   "documents": "Pruning study E1: docs/PRUNING.md section 9, results/pruning_study.*",
+   "has_outputs": true,
+   "official_run_commit": "4f9effeb121fbf86abd8e4eb2de2735457007eea",
+   "path": "component2-tinyml/notebooks/colab_pruning.ipynb",
+   "rerun_effect": "NOT BLOCKED: pins 4f9effe; Run all repeats the deterministic TRAINING-only study into /content/prune_out. Committed results are not changed. Accepted by Member 2.",
+   "saved_in_commit": "288afc3c1bc6cd4c02e90156bb1dcabcbcfc1807",
+   "settings": {
+    "APPROVED_COMMIT": "4f9effeb121fbf86abd8e4eb2de2735457007eea",
+    "CONFIRM_PRUNING": true
+   },
+   "sha256": "c38b81a8c86eb9af5f2f8745101c548aed00a9b75a021758f9ce4aec232690e3",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "c17410aa471f6b970e86b2d5cf36edcd0537c72e405f1c804bda5ebaf669769f"
+  },
+  {
+   "documents": "Phase 8 final training: docs/TRAINING_EXPORT.md section 10, models/",
+   "has_outputs": true,
+   "official_run_commit": null,
+   "path": "component2-tinyml/notebooks/colab_final_training.ipynb",
+   "rerun_effect": "NOT BLOCKED: Run all retrains on TRAINING into /content/final_model; models/ in the repository is not changed (frozen by pinned SHA-256). Accepted by Member 2.",
+   "saved_in_commit": "e1bf5053b2b6356c81509a7386fd13a16e8d3108",
+   "settings": {},
+   "sha256": "a1f31255f43b874201755ea5e9b24a94d092f6317a253ec79ef97d44d6b800be",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "b4979cf1ca42e7569e9459d800e2186be19d4514010ef35ef9e62abb4cdaa7d3"
+  },
+  {
+   "documents": "Phase 7 baseline comparison: docs/PHASE7_RESULTS.md, results/baselines_phase7.*",
+   "has_outputs": true,
+   "official_run_commit": null,
+   "path": "component2-tinyml/notebooks/colab_phase7_baselines.ipynb",
+   "rerun_effect": "NOT BLOCKED: Run all repeats the TRAINING-only cross-validation in Colab; committed results are not changed. Accepted by Member 2.",
+   "saved_in_commit": "5d96895ca6a701f0c318f4e8637ddc6c37187c58",
+   "settings": {},
+   "sha256": "5e92514ef9b8d9a91e149989a30c5d9fa9a4b5b232fc732ea1941a91429575b3",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "69a072628b2796d3fd12248d6d70d086c5ce5512a58c3f32d8b5ad6768658ec2"
+  },
+  {
+   "documents": "Colab environment check: results/colab_env_check.json",
+   "has_outputs": true,
+   "official_run_commit": null,
+   "path": "component2-tinyml/notebooks/colab_train.ipynb",
+   "rerun_effect": "NOT BLOCKED: repeats the environment and test check; no training, no OPERATION.",
+   "saved_in_commit": "0544226f749a4a7703cd536b4d970931c982419d",
+   "settings": {},
+   "sha256": "7636b4e5e083ea74a75908d6d6fe98cf32523ddfc0b4bdc6b77ec599926c9f93",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": "8788d78d1f0e6c95d732ac17c60f175de558db82685c67a70bcf7a3d65ea897b"
+  },
+  {
+   "documents": "Personal Colab environment-check session saved at the repository root (not a repository template; outside component2-tinyml)",
+   "has_outputs": true,
+   "official_run_commit": null,
+   "path": "colab_train.ipynb",
+   "rerun_effect": "NOT BLOCKED: repeats the environment check (dataset hash, TRAINING-only feature smoke test, pytest); no training, no OPERATION.",
+   "saved_in_commit": "688fb4c0fd708b9b66947b0bdf67afd6a8cbfdac",
+   "settings": {},
+   "sha256": "11570ca281827667c7681d4607a5f6d8d0799d68b122ecaffd0f8dfee10e4963",
+   "state": "ARCHIVED_EXECUTED",
+   "template_code_sha256": null
+  }
+ ],
+ "registry_version": "archived-notebooks-v1",
+ "reviewed_template_commit": "95af2d25e1eab1e7471aa977ae674ee6b74121d2"
+}
