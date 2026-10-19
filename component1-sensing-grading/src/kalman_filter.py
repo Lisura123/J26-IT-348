@@ -59,9 +59,10 @@ KALMAN_SETTINGS = {
 
 
 def run_kalman_stage(df):
-    # filter every sensor in KALMAN_SETTINGS and return a new copy
     df = df.copy()
     for col, ratio in KALMAN_SETTINGS.items():
+        if col not in df.columns:
+            continue   # this sensor is not on the device (e.g. humidity)
         r = estimate_noise(df, col)
         df[col] = apply_kalman(df, col, ratio * r, r)
 

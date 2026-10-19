@@ -26,18 +26,31 @@ def remove_duplicates(df):
     return df
 
 
+# DS18B20 temperature columns that we check for -127 and -999
+# (on the real device, probe 1 = air and probe 2 = panel)
+TEMP_COLUMNS = {
+    "panel_temp1_c": "TEMP1",
+    "panel_temp2_c": "TEMP2",
+    "ambient_temp_c": "AMBIENT_TEMP",
+}
+
+
 def fix_temperature(df):
-    for num, col in [(1, "panel_temp1_c"), (2, "panel_temp2_c")]:
+    # -127 and -999 are not real temperatures
+    # change them to NaN and add a flag
+    for col, name in TEMP_COLUMNS.items():
+        if col not in df.columns:
+            continue   # this sensor is not on the device
         disconnected = df[col] == TEMP_DISCONNECTED
         missing = df[col] == TEMP_MISSING
 
-        df = add_flag(df, disconnected, f"TEMP{num}_SENTINEL_-127")
-        df = add_flag(df, missing, f"TEMP{num}_MISSING_-999")
+        df = add_flag(df, disconnected, f"{name}_SENTINEL_-127")
+        df = add_flag(df, missing, f"{name}_MISSING_-999")
         df.loc[disconnected | missing, col] = np.nan
 
-    # Use the other temperature sensor if one is faulty; if both are faulty, keep the value as NaN
-    df["panel_temp1_c"] = df["panel_temp1_c"].fillna(df["panel_temp2_c"])
-    df["panel_temp2_c"] = df["panel_temp2_c"].fillna(df["panel_temp1_c"])
+    if "panel_temp1_c" in df.columns and "panel_temp2_c" in df.columns:
+        df["panel_temp1_c"] = df["panel_temp1_c"].fillna(df["panel_temp2_c"])
+        df["panel_temp2_c"] = df["panel_temp2_c"].fillna(df["panel_temp1_c"])
     return df
 
 def add_session_id(df):
@@ -84,7 +97,9 @@ def fix_spikes(df):
 
 
 def fix_humidity(df):
-    df["humidity_pct"] = df["humidity_pct"].clip(upper=100)
+    # our real device has no humidity sensor, so skip if the column is not there
+    if "humidity_pct" in df.columns:
+        df["humidity_pct"] = df["humidity_pct"].clip(upper=100)
     return df
 
 

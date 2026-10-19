@@ -20,11 +20,14 @@ def make_indicators(df):
     power_per_irr = df["power_mw"] / irr
     current_per_irr = df["current_ma"] / irr
 
+    # healthy reference = 95th percentile, so a few high values do not decide it
     df["power_ratio"] = (power_per_irr / power_per_irr.quantile(0.95)).clip(0, 1)
     df["current_ratio"] = (current_per_irr / current_per_irr.quantile(0.95)).clip(0, 1)
     df["voltage_ratio"] = (df["voltage_v"] / df["voltage_v"].quantile(0.95)).clip(0, 1)
 
-    panel_temp = (df["panel_temp1_c"] + df["panel_temp2_c"]) / 2
+    # average of the panel temperature sensors we have (1 on our device, 2 in the dataset)
+    panel_cols = [c for c in ["panel_temp1_c", "panel_temp2_c"] if c in df.columns]
+    panel_temp = df[panel_cols].mean(axis=1)
     df["temp_rise"] = panel_temp - df["ambient_temp_c"]
     df["dust_level"] = df["dust_vo_v"]
     return df
