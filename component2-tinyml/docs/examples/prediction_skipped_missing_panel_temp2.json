@@ -1,0 +1,18 @@
+{
+ "record_id": "SYNTHETIC-0002",
+ "timestamp_utc": "2026-09-10T00:26:45Z",
+ "site_id": "SITE-A",
+ "device_id": "ESP32-A01",
+ "message_schema": "pv-msg-1",
+ "model_version": "c2-local-v1",
+ "feature_version": "pv8-v1",
+ "inference_backend": "INT8",
+ "quant_version": "int8-v1",
+ "prediction_status": "SKIPPED_INVALID_INPUT",
+ "input_status": "INVALID_INPUT",
+ "decision_source": "NONE",
+ "sensor_invalid_mask": 16,
+ "confirmation_status": "INSUFFICIENT_EVIDENCE",
+ "confirmation_evidence": "SKIPPED_BY_QUALITY_GATE",
+ "confirmation_count": 0
+}

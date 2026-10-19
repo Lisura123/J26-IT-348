@@ -1,0 +1,31 @@
+menu "PV fault classifier (Component 2)"
+
+    choice PV_FAULT_DEFAULT_BACKEND
+        prompt "Default inference backend"
+        default PV_FAULT_BACKEND_FLOAT32
+        help
+            Backend used by applications that do not choose one per call.
+            Float32 is the reference (source of truth); INT8 is the
+            deployment derivative. The final choice is made from ESP32
+            measurements (docs/ARCHITECTURE.md 9.1). Both are always linked.
+
+        config PV_FAULT_BACKEND_FLOAT32
+            bool "Float32"
+        config PV_FAULT_BACKEND_INT8
+            bool "INT8"
+    endchoice
+
+    config PV_FAULT_BENCH_ITERATIONS
+        int "Benchmark iterations per backend"
+        range 100 5000
+        default 1000
+        help
+            Timed inferences per backend in the benchmark application.
+            Uses 16 bytes of static RAM per iteration.
+
+    config PV_FAULT_BENCH_WARMUP
+        int "Benchmark warm-up iterations"
+        range 0 1000
+        default 100
+
+endmenu

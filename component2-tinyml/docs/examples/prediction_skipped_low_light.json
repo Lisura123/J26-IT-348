@@ -1,0 +1,17 @@
+{
+ "record_id": "SYNTHETIC-0003",
+ "timestamp_utc": "2026-09-10T18:40:00Z",
+ "site_id": "SITE-A",
+ "device_id": "ESP32-A01",
+ "message_schema": "pv-msg-1",
+ "model_version": "c2-local-v1",
+ "feature_version": "pv8-v1",
+ "inference_backend": "FLOAT32",
+ "prediction_status": "SKIPPED_LOW_LIGHT",
+ "input_status": "LOW_LIGHT",
+ "decision_source": "NONE",
+ "sensor_invalid_mask": 0,
+ "confirmation_status": "INSUFFICIENT_EVIDENCE",
+ "confirmation_evidence": "SKIPPED_BY_QUALITY_GATE",
+ "confirmation_count": 0
+}

@@ -1,0 +1,971 @@
+{
+ "status": "PRUNING_STUDY_E1_TRAINING_ONLY",
+ "study_version": "prune-e1-v1",
+ "created_utc": "2026-10-16T20:39:55Z",
+ "provenance": {
+  "dataset_sha256": "5fbb93471c056c274cbf81e8c317934e379b2484013147e4c2cacfa93421595b",
+  "split_version": "runwise-v1",
+  "contract_sha256": "752f62285cca62b59a629686fd5b941b748a811c78808751c04595ee3452cb2a",
+  "weights_sha256": "94e7ab9384a1906ec2cf0d3176b435e700f15cd99552fbc6c71519c648ecc3a7",
+  "model_version": "c2-local-v1",
+  "quant_version": "int8-v1",
+  "quant_params_sha256": "5daa66d21098b20845ea7b9d9d891a7a43fb62fd4d225b9b348936f5de62ab25",
+  "code_commit": "4f9effe",
+  "environment": {
+   "python": "3.13.16",
+   "numpy": "2.1.3",
+   "pandas": "2.2.3",
+   "sklearn": "1.6.1"
+  }
+ },
+ "operation_window_used": false,
+ "window": "TRAINING",
+ "training_rows": 3000,
+ "status_ok_rows": 2924,
+ "skipped_rows": 76,
+ "retrained_or_fine_tuned": false,
+ "model_artifacts_written": false,
+ "estimate_note": "ESTIMATE, not a hardware measurement: analytical parameter-storage bytes and multiply-add counts. Sparse formats exclude decoding code; no ESP32 flash, RAM, latency or energy was measured.",
+ "rows": 2924,
+ "variants": [
+  {
+   "name": "baseline",
+   "method": "none",
+   "level": 0,
+   "hidden_units": 16,
+   "removed_units": [],
+   "parameters_stored_dense": 229,
+   "nonzero_weights_float": 208,
+   "nonzero_weights_int8": 206,
+   "fl_layout": "unchanged (229 values)",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 916,
+     "bitmap_sparse": 942,
+     "index_list_sparse": 1124
+    },
+    "int8": {
+     "dense": 561,
+     "bitmap_sparse": 585,
+     "index_list_sparse": 765
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 208,
+     "tanh_evaluations": 16
+    },
+    "int8": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 206,
+     "tanh_evaluations": 16
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "unstructured_10pct",
+   "method": "unstructured_magnitude",
+   "level": 0.1,
+   "hidden_units": 16,
+   "removed_units": [],
+   "parameters_stored_dense": 229,
+   "nonzero_weights_float": 187,
+   "nonzero_weights_int8": 187,
+   "fl_layout": "unchanged shape (229 values); FL would need a shared fixed mask",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 916,
+     "bitmap_sparse": 858,
+     "index_list_sparse": 1019
+    },
+    "int8": {
+     "dense": 561,
+     "bitmap_sparse": 566,
+     "index_list_sparse": 727
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 187,
+     "tanh_evaluations": 16
+    },
+    "int8": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 187,
+     "tanh_evaluations": 16
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "unstructured_20pct",
+   "method": "unstructured_magnitude",
+   "level": 0.2,
+   "hidden_units": 16,
+   "removed_units": [],
+   "parameters_stored_dense": 229,
+   "nonzero_weights_float": 166,
+   "nonzero_weights_int8": 166,
+   "fl_layout": "unchanged shape (229 values); FL would need a shared fixed mask",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 916,
+     "bitmap_sparse": 774,
+     "index_list_sparse": 914
+    },
+    "int8": {
+     "dense": 561,
+     "bitmap_sparse": 545,
+     "index_list_sparse": 685
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 166,
+     "tanh_evaluations": 16
+    },
+    "int8": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 166,
+     "tanh_evaluations": 16
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "unstructured_30pct",
+   "method": "unstructured_magnitude",
+   "level": 0.3,
+   "hidden_units": 16,
+   "removed_units": [],
+   "parameters_stored_dense": 229,
+   "nonzero_weights_float": 146,
+   "nonzero_weights_int8": 146,
+   "fl_layout": "unchanged shape (229 values); FL would need a shared fixed mask",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 916,
+     "bitmap_sparse": 694,
+     "index_list_sparse": 814
+    },
+    "int8": {
+     "dense": 561,
+     "bitmap_sparse": 525,
+     "index_list_sparse": 645
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 146,
+     "tanh_evaluations": 16
+    },
+    "int8": {
+     "dense_multiply_adds": 208,
+     "zero_skipping_multiply_adds": 146,
+     "tanh_evaluations": 16
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "structured_minus2",
+   "method": "structured_hidden_units",
+   "level": 2,
+   "hidden_units": 14,
+   "removed_units": [
+    6,
+    14
+   ],
+   "parameters_stored_dense": 201,
+   "nonzero_weights_float": 182,
+   "nonzero_weights_int8": 180,
+   "fl_layout": "BROKEN: 8-14-5 has 201 values, not 229 (experimental only)",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 804,
+     "bitmap_sparse": 827,
+     "index_list_sparse": 986
+    },
+    "int8": {
+     "dense": 527,
+     "bitmap_sparse": 548,
+     "index_list_sparse": 705
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 182,
+     "zero_skipping_multiply_adds": 182,
+     "tanh_evaluations": 14
+    },
+    "int8": {
+     "dense_multiply_adds": 182,
+     "zero_skipping_multiply_adds": 180,
+     "tanh_evaluations": 14
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "structured_minus3",
+   "method": "structured_hidden_units",
+   "level": 3,
+   "hidden_units": 13,
+   "removed_units": [
+    0,
+    6,
+    14
+   ],
+   "parameters_stored_dense": 187,
+   "nonzero_weights_float": 169,
+   "nonzero_weights_int8": 167,
+   "fl_layout": "BROKEN: 8-13-5 has 187 values, not 229 (experimental only)",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 748,
+     "bitmap_sparse": 770,
+     "index_list_sparse": 917
+    },
+    "int8": {
+     "dense": 510,
+     "bitmap_sparse": 530,
+     "index_list_sparse": 675
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 169,
+     "zero_skipping_multiply_adds": 169,
+     "tanh_evaluations": 13
+    },
+    "int8": {
+     "dense_multiply_adds": 169,
+     "zero_skipping_multiply_adds": 167,
+     "tanh_evaluations": 13
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "name": "structured_minus5",
+   "method": "structured_hidden_units",
+   "level": 5,
+   "hidden_units": 11,
+   "removed_units": [
+    0,
+    1,
+    6,
+    7,
+    14
+   ],
+   "parameters_stored_dense": 159,
+   "nonzero_weights_float": 143,
+   "nonzero_weights_int8": 142,
+   "fl_layout": "BROKEN: 8-11-5 has 159 values, not 229 (experimental only)",
+   "storage_estimate_bytes": {
+    "float32": {
+     "dense": 636,
+     "bitmap_sparse": 654,
+     "index_list_sparse": 779
+    },
+    "int8": {
+     "dense": 476,
+     "bitmap_sparse": 493,
+     "index_list_sparse": 617
+    }
+   },
+   "multiply_add_estimate": {
+    "float32": {
+     "dense_multiply_adds": 143,
+     "zero_skipping_multiply_adds": 143,
+     "tanh_evaluations": 11
+    },
+    "int8": {
+     "dense_multiply_adds": 143,
+     "zero_skipping_multiply_adds": 142,
+     "tanh_evaluations": 11
+    }
+   },
+   "pruned_float_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_float": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0,
+    "training_fit_macro_f1": {
+     "float_reference": 1.0,
+     "int8": 1.0,
+     "drop": 0.0
+    }
+   },
+   "pruned_int8_vs_frozen_int8": {
+    "rows": 2924,
+    "agreement": 1.0,
+    "changed": 0,
+    "per_class_agreement": {
+     "NORMAL": 1.0,
+     "PARTIAL_SHADING": 1.0,
+     "DUST": 1.0,
+     "OPEN_CIRCUIT": 1.0,
+     "SHORT_CIRCUIT": 1.0
+    },
+    "change_pairs": {},
+    "safety_changes": {
+     "OPEN_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     },
+     "SHORT_CIRCUIT": {
+      "changed_to": 0,
+      "changed_from": 0
+     }
+    },
+    "safety_changes_total": 0
+   },
+   "int8_input_clips": 0,
+   "int8_lut_clips": 0,
+   "e1_checks": {
+    "float32": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    },
+    "int8": {
+     "safety_changes_zero": true,
+     "agreement_at_least_0.995": true,
+     "passed": true
+    }
+   }
+  }
+ ],
+ "baseline_int8_agreement_with_float": 1.0,
+ "conclusion_rule": "E1 checks 1-2 only. Adoption also needs a measured on-device benefit (criterion 3) and an unchanged FL layout (criterion 4); neither is decided by E1.",
+ "caveats": [
+  "All comparisons use TRAINING rows, on which the model was fitted; agreement and training-fit macro-F1 are not independent accuracy.",
+  "OPERATION was not used and is not used to choose a pruning level.",
+  "Storage and multiply-add figures are estimates; no ESP32 measurement was made.",
+  "Structured variants change the architecture and break the 229-value FL layout (experimental only).",
+  "Prediction agreement does not establish electrical safety; OPEN/SHORT outputs stay unconfirmed ML predictions."
+ ]
+}

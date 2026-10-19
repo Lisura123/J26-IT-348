@@ -1,0 +1,690 @@
+{
+ "status": "FINAL_TEST_OPERATION",
+ "protocol_version": "operation-eval-v1",
+ "window": "OPERATION",
+ "created_utc": "2026-10-16T09:29:54Z",
+ "provenance": {
+  "dataset_sha256": "5fbb93471c056c274cbf81e8c317934e379b2484013147e4c2cacfa93421595b",
+  "split_version": "runwise-v1",
+  "model_version": "c2-local-v1",
+  "weights_sha256": "94e7ab9384a1906ec2cf0d3176b435e700f15cd99552fbc6c71519c648ecc3a7",
+  "artifact_sha256": {
+   "model_contract.json": "752f62285cca62b59a629686fd5b941b748a811c78808751c04595ee3452cb2a",
+   "feature_config.json": "421b5d4ed7e2092b6da3e2f2f48e000a0ecda5ef0542e5a660c65fd607128a86",
+   "training_metadata.json": "76389fc889c9b0097ba0d944c32e535930c835c7d15beef018b1d00f48f5501c",
+   "manifest.json": "989cf6ece67ad8be044dd981ae1d8a9ba830798b5b56dbed5c45d7b71303a526"
+  },
+  "training_commit": "9a641d5",
+  "evaluation_code_commit": "a2a85d6",
+  "environment": {
+   "python": "3.13.16",
+   "numpy": "2.1.3",
+   "pandas": "2.2.3",
+   "sklearn": "1.6.1"
+  }
+ },
+ "frozen": {
+  "refit": false,
+  "retrained": false,
+  "thresholds_changed": false,
+  "inference": "contract-only NumPy (export.predict_raw)",
+  "inputs_excluded": [
+   "label",
+   "health_score"
+  ]
+ },
+ "rows": {
+  "total": 3000,
+  "runs": 50,
+  "runs_per_class": {
+   "NORMAL": 10,
+   "PARTIAL_SHADING": 10,
+   "DUST": 10,
+   "OPEN_CIRCUIT": 10,
+   "SHORT_CIRCUIT": 10
+  }
+ },
+ "coverage": {
+  "total": 3000,
+  "classified": 2940,
+  "skipped": 60,
+  "coverage": 0.98,
+  "skip_reasons": {
+   "LOW_LIGHT": 60
+  },
+  "per_class": {
+   "NORMAL": {
+    "total": 600,
+    "classified": 600,
+    "coverage": 1.0
+   },
+   "PARTIAL_SHADING": {
+    "total": 600,
+    "classified": 600,
+    "coverage": 1.0
+   },
+   "DUST": {
+    "total": 600,
+    "classified": 540,
+    "coverage": 0.9
+   },
+   "OPEN_CIRCUIT": {
+    "total": 600,
+    "classified": 600,
+    "coverage": 1.0
+   },
+   "SHORT_CIRCUIT": {
+    "total": 600,
+    "classified": 600,
+    "coverage": 1.0
+   }
+  },
+  "runs_not_fully_classified": {
+   "SITE-D-DUS-12": {
+    "classified": 0,
+    "total": 60
+   }
+  }
+ },
+ "classification": {
+  "n": 2940,
+  "macro_f1": 0.9783221813460393,
+  "balanced_accuracy": 0.9774074074074074,
+  "accuracy": 0.9792517006802721,
+  "classes_present": [
+   "NORMAL",
+   "PARTIAL_SHADING",
+   "DUST",
+   "OPEN_CIRCUIT",
+   "SHORT_CIRCUIT"
+  ],
+  "per_class": {
+   "NORMAL": {
+    "precision": 0.9104704097116844,
+    "recall": 1.0,
+    "f1": 0.9531374106433678,
+    "support": 600
+   },
+   "PARTIAL_SHADING": {
+    "precision": 0.9966777408637874,
+    "recall": 1.0,
+    "f1": 0.9983361064891847,
+    "support": 600
+   },
+   "DUST": {
+    "precision": 1.0,
+    "recall": 0.8870370370370371,
+    "f1": 0.9401373895976447,
+    "support": 540
+   },
+   "OPEN_CIRCUIT": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "support": 600
+   },
+   "SHORT_CIRCUIT": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "support": 600
+   }
+  },
+  "safety_recall": {
+   "OPEN_CIRCUIT": 1.0,
+   "SHORT_CIRCUIT": 1.0
+  },
+  "confusion_matrix": [
+   [
+    600,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    600,
+    0,
+    0,
+    0
+   ],
+   [
+    59,
+    2,
+    479,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    600,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    600
+   ]
+  ],
+  "confusion_matrix_row_normalised": [
+   [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.1093,
+    0.0037,
+    0.887,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ]
+ },
+ "coverage_adjusted_recall": {
+  "NORMAL": {
+   "total": 600,
+   "correct": 600,
+   "recall": 1.0
+  },
+  "PARTIAL_SHADING": {
+   "total": 600,
+   "correct": 600,
+   "recall": 1.0
+  },
+  "DUST": {
+   "total": 600,
+   "correct": 479,
+   "recall": 0.7983333333333333
+  },
+  "OPEN_CIRCUIT": {
+   "total": 600,
+   "correct": 600,
+   "recall": 1.0
+  },
+  "SHORT_CIRCUIT": {
+   "total": 600,
+   "correct": 600,
+   "recall": 1.0
+  }
+ },
+ "run_level": {
+  "runs": 49,
+  "majority_vote_accuracy": 0.9795918367346939,
+  "worst_run_accuracy": 0.08333333333333333,
+  "worst_run": "SITE-C-DUS-06"
+ },
+ "per_site": {
+  "SITE-A": {
+   "classified": 480,
+   "accuracy": 1.0
+  },
+  "SITE-B": {
+   "classified": 480,
+   "accuracy": 1.0
+  },
+  "SITE-C": {
+   "classified": 660,
+   "accuracy": 0.9166666666666666
+  },
+  "SITE-D": {
+   "classified": 360,
+   "accuracy": 0.9888888888888889
+  },
+  "SITE-E": {
+   "classified": 780,
+   "accuracy": 0.9974358974358974
+  },
+  "SITE-F": {
+   "classified": 180,
+   "accuracy": 1.0
+  }
+ },
+ "safety": {
+  "OPEN_CIRCUIT": {
+   "false_predictions": {
+    "count": 0,
+    "rate_per_1000_classified_non_fault": 0.0,
+    "by_true_label": {},
+    "runs": [],
+    "electrical_context_median": {
+     "false_predictions": {
+      "current_ma": null,
+      "voltage_v": null,
+      "irradiance_lux": null
+     },
+     "true_fault_detections": {
+      "current_ma": 0.1,
+      "voltage_v": 3.254,
+      "irradiance_lux": 41099.0
+     },
+     "note": "descriptive only; no threshold is derived from these values"
+    }
+   },
+   "missed_faults": {
+    "fault_readings": 600,
+    "classified": 600,
+    "correct": 600,
+    "missed": 0,
+    "skipped": 0,
+    "recall": 1.0,
+    "coverage_adjusted_recall": 1.0,
+    "runs": [
+     {
+      "run_id": "SITE-B-OPE-18",
+      "site_id": "SITE-B",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-OPE-02",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-OPE-06",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-OPE-08",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-OPE-10",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-OPE-20",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-OPE-12",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-OPE-14",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-F-OPE-04",
+      "site_id": "SITE-F",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-F-OPE-16",
+      "site_id": "SITE-F",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     }
+    ]
+   },
+   "electrical_confirmation": "NOT_ASSESSED: confirmation rules are placeholders (PHASE7_RESULTS.md decision 3); predictions are unconfirmed"
+  },
+  "SHORT_CIRCUIT": {
+   "false_predictions": {
+    "count": 0,
+    "rate_per_1000_classified_non_fault": 0.0,
+    "by_true_label": {},
+    "runs": [],
+    "electrical_context_median": {
+     "false_predictions": {
+      "current_ma": null,
+      "voltage_v": null,
+      "irradiance_lux": null
+     },
+     "true_fault_detections": {
+      "current_ma": 38.635,
+      "voltage_v": 0.025,
+      "irradiance_lux": 24297.0
+     },
+     "note": "descriptive only; no threshold is derived from these values"
+    }
+   },
+   "missed_faults": {
+    "fault_readings": 600,
+    "classified": 600,
+    "correct": 600,
+    "missed": 0,
+    "skipped": 0,
+    "recall": 1.0,
+    "coverage_adjusted_recall": 1.0,
+    "runs": [
+     {
+      "run_id": "SITE-A-SHO-14",
+      "site_id": "SITE-A",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-B-SHO-16",
+      "site_id": "SITE-B",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-SHO-04",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-SHO-08",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-C-SHO-18",
+      "site_id": "SITE-C",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-SHO-02",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-SHO-06",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-SHO-10",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-SHO-12",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     },
+     {
+      "run_id": "SITE-E-SHO-20",
+      "site_id": "SITE-E",
+      "readings": 60,
+      "classified": 60,
+      "correct": 60,
+      "missed": 0,
+      "missed_as": {},
+      "skipped": 0,
+      "recall": 1.0,
+      "coverage_adjusted_recall": 1.0,
+      "first_detection_reading": 1,
+      "time_to_first_detection_s": 0.0
+     }
+    ]
+   },
+   "electrical_confirmation": "NOT_ASSESSED: confirmation rules are placeholders (PHASE7_RESULTS.md decision 3); predictions are unconfirmed"
+  }
+ },
+ "bootstrap": {
+  "method": "run-level bootstrap, stratified by true class, percentile interval",
+  "resamples": 1000,
+  "seed": 42,
+  "level": 0.95,
+  "runs_per_class": {
+   "DUST": 9,
+   "NORMAL": 10,
+   "OPEN_CIRCUIT": 10,
+   "PARTIAL_SHADING": 10,
+   "SHORT_CIRCUIT": 10
+  },
+  "accuracy": {
+   "low": 0.941156462585034,
+   "high": 0.9993197278911564
+  },
+  "macro_f1": {
+   "low": 0.9366481259927668,
+   "high": 0.9992961637839223
+  },
+  "OPEN_CIRCUIT_recall": {
+   "low": 1.0,
+   "high": 1.0
+  },
+  "SHORT_CIRCUIT_recall": {
+   "low": 1.0,
+   "high": 1.0
+  }
+ },
+ "latency": {
+  "scope": "HOST_CPU_NOT_ESP32",
+  "note": "Python/NumPy on the evaluation host. ESP32 flash, RAM and latency must be measured on the device and are not estimated from these numbers.",
+  "rows": "TRAINING rows (labels and health_score removed); OPERATION is not used for timing",
+  "forward_pass_single_reading": {
+   "n": 1000,
+   "mean_us": 21.607197,
+   "median_us": 20.828,
+   "p95_us": 26.20365,
+   "p99_us": 35.82662
+  },
+  "pandas_reference_pipeline_single_reading": {
+   "n": 200,
+   "mean_us": 14179.98545,
+   "median_us": 13567.4395,
+   "p95_us": 16884.69419999999,
+   "p99_us": 22894.516719999992
+  },
+  "batched_pipeline": {
+   "readings": 3000,
+   "total_ms": 25.065829,
+   "per_reading_us": 8.355276333333334
+  },
+  "host": {
+   "machine": "x86_64",
+   "processor": "x86_64",
+   "cpu_count": 2,
+   "platform": "Linux-6.6.122+-x86_64-with-glibc2.39"
+  }
+ },
+ "phase7_context": {
+  "cv_pooled_macro_f1": 0.981,
+  "loso_training_pooled_macro_f1": 0.98,
+  "note": "TRAINING-window model-selection estimates, shown for context only"
+ },
+ "caveats": [
+  "OPEN/SHORT outputs are ML predictions; electrical confirmation is not implemented.",
+  "Relay isolation is not implemented; nothing is actuated.",
+  "Labels are dataset labels; dataset provenance is UNRESOLVED (DATA_PROVENANCE.md).",
+  "Latency is host CPU, not ESP32.",
+  "Low-light and saturation thresholds are placeholders and were not tuned."
+ ]
+}

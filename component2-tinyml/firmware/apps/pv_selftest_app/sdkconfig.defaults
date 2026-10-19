@@ -1,0 +1,2 @@
+# No target or board is set here: run `idf.py set-target <chip>` first.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
