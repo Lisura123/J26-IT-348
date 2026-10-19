@@ -7,6 +7,10 @@ Writes results/splits_runwise_v1.json (run -> fold assignments + metadata,
 loaded by training code with tinyml.splits.load_assignments) and
 results/split_summary.md. Only pv_fault_dataset.csv is read.
 """
+# ---- Pipeline step 2 of 8: split the data by run (never by single row) ----
+# When:   once, after step 1; every later step reuses this split file
+# Reads:  pv_fault_dataset.csv
+# Writes: results/splits_runwise_v1.json, results/split_summary.md
 import argparse
 import sys
 from pathlib import Path
@@ -23,6 +27,7 @@ from tinyml.splits import (  # noqa: E402
 )
 from tinyml.validate import file_sha256  # noqa: E402
 
+# Short class codes for the tables (the same codes appear in run_id, e.g. SITE-A-NOR-07).
 SHORT = {"NORMAL": "NOR", "PARTIAL_SHADING": "PAR", "DUST": "DUS",
          "OPEN_CIRCUIT": "OPE", "SHORT_CIRCUIT": "SHO"}
 
@@ -35,6 +40,7 @@ def find_dataset(data_dir):
     return hits[0]
 
 
+# Build the Markdown summary: runs per class in each train/test fold of the three protocols.
 def render(summary, meta):
     L = ["# Run-wise split summary", "",
          f"Split version `{meta['split_version']}`, seed {meta['seed']}, "
@@ -79,13 +85,17 @@ def main():
     ap.add_argument("--out-dir", type=Path, default=ROOT / "results")
     a = ap.parse_args()
 
+    # 1) Load the dataset.
     path = find_dataset(a.data_dir)
     df = pd.read_csv(path)
+    # 2) Put whole runs into folds (rows of one run never end up in train and test); the seed makes it repeatable.
     assignments = make_assignments(df, n_splits=a.folds, seed=a.seed)
+    # 3) Record how the split was made, including the dataset fingerprint.
     meta = {"split_version": SPLIT_VERSION, "seed": a.seed, "n_splits": a.folds,
             "cv_window": "TRAINING", "dataset_file": "pv_fault_dataset.csv",
             "dataset_sha256": file_sha256(path), "dataset_rows": int(len(df)),
             "runs": int(len(assignments)), "sklearn_version": sklearn.__version__}
+    # 4) Save the split file (used by steps 3-8) and the readable summary.
     a.out_dir.mkdir(parents=True, exist_ok=True)
     (a.out_dir / "splits_runwise_v1.json").write_text(to_json(assignments, meta) + "\n", encoding="utf-8")
     (a.out_dir / "split_summary.md").write_text(render(summarize(df, assignments), meta), encoding="utf-8")

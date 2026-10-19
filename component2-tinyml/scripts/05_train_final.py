@@ -8,6 +8,10 @@ then writes model_contract.json, feature_config.json, training_metadata.json
 and manifest.json, and verifies them. The OPERATION window is not read for
 fitting or evaluation.
 """
+# ---- Pipeline step 5 of 8: train the final model ONCE and freeze it ----
+# When:   run once (official run in Colab, already done); the frozen model must not be retrained
+# Reads:  pv_fault_dataset.csv (TRAINING rows only), results/splits_runwise_v1.json
+# Writes: models/model_contract.json, feature_config.json, training_metadata.json, manifest.json
 import argparse
 import sys
 import warnings
@@ -35,18 +39,23 @@ def find_dataset(data_dir):
 
 def run(data_path, splits_path, out_dir, seed=FINAL_SEED, code_commit=None):
     """Train, export and verify. Returns (result, contract, metadata, paths)."""
+    # 1) Refuse any dataset except the validated one (pinned SHA-256).
     sha = check_dataset_sha256(file_sha256(data_path))
     df = pd.read_csv(data_path)
+    # 2) Load the run-wise splits (they mark which runs are TRAINING).
     assignments, meta = load_assignments(splits_path, df, dataset_sha256=sha)
+    # 3) Fit the pv8-v1 features and the 8-16-5 tanh MLP on TRAINING rows (fixed seed = repeatable).
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = train_final(df, seed=seed, assignments=assignments)
     result["facts"]["warnings"] = sorted({f"{w.category.__name__}: {str(w.message)[:160]}"
                                           for w in caught})
+    # 4) Build the model contract: weights, features, scaler, labels, hashes and provenance.
     commit = code_commit or git_commit(ROOT)
     contract = build_contract(result, sha, meta["split_version"], commit, environment())
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     metadata = training_metadata(result, contract, created_utc=created)
+    # 5) Write the model files, then read them back and verify every hash.
     paths = write_artifacts(out_dir, contract, result["config"], metadata)
     verify_artifacts(out_dir)
     return result, contract, metadata, paths
@@ -59,6 +68,7 @@ def main():
     ap.add_argument("--out-dir", default=str(ROOT / "models"))
     ap.add_argument("--seed", type=int, default=FINAL_SEED)
     a = ap.parse_args()
+    # Train, then print a short summary for the run record.
     result, contract, _, paths = run(find_dataset(a.data_dir), a.splits, a.out_dir, a.seed)
     f = result["facts"]
     print(f"Trained on {f['rows']} TRAINING rows ({f['runs']} runs), {f['ok_rows_used']} used, "

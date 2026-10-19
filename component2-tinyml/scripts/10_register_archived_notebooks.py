@@ -12,6 +12,10 @@ reviewed template commit (REVIEWED_TEMPLATE_COMMIT), which the saved code must
 still equal. Writing refuses to replace an existing registry entry whose
 SHA-256 differs: a changed archived notebook needs a new, reviewed decision.
 """
+# ---- Pipeline step support: register executed Colab notebooks as archived runs ----
+# When:   after a notebook is saved from Colab and reviewed (--check verifies the registry)
+# Reads:  the saved notebooks (never changed)
+# Writes: notebooks/ARCHIVED_RUNS.json
 import argparse
 import json
 import subprocess
@@ -25,6 +29,7 @@ from tinyml import notebook_archive as na  # noqa: E402
 
 REVIEWED_TEMPLATE_COMMIT = "95af2d25e1eab1e7471aa977ae674ee6b74121d2"   # last reviewed template versions
 
+# One entry per archived notebook: what it documents and what a re-run would do.
 ENTRIES = {
     "component2-tinyml/notebooks/colab_operation_eval.ipynb": {
         "documents": "Phase 9 one-time OPERATION evaluation: docs/OPERATION_RESULTS.md, results/operation_eval.json",
@@ -84,6 +89,7 @@ def template_code_sha256(rel):
     return na.normalised_code_sha256(json.loads(git("show", f"{REVIEWED_TEMPLATE_COMMIT}:{path}")))
 
 
+# Build the registry: exact SHA-256, saved settings and the reviewed-code check for each notebook.
 def build(existing=None):
     old = {e["path"]: e for e in (existing or {}).get("notebooks", [])}
     entries = []
@@ -111,6 +117,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
+    # Build the registry, then either compare (--check) or write it.
     existing = na.load(na.REGISTRY) if na.REGISTRY.exists() else None
     reg = build(existing)
     text = json.dumps(reg, indent=1, sort_keys=True) + "\n"

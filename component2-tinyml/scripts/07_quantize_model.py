@@ -11,6 +11,10 @@ golden vectors; generate the C headers; run the host C tests; write the
 INT8 parameters, manifest and report. Nothing is trained or refitted, and
 the float contract is not changed.
 """
+# ---- Pipeline step 7 of 8: derive the INT8 model for the ESP32 (no retraining) ----
+# When:   once after step 5 (official run done; see docs/QUANTIZATION.md section 12)
+# Reads:  pv_fault_dataset.csv (TRAINING rows only), the frozen models/
+# Writes: models/int8/, firmware/pv_fault/generated/*.h, tests/host_c/golden_vectors.h, results/quantization_report.*
 import argparse
 import json
 import sys
@@ -49,6 +53,7 @@ def find_dataset(data_dir):
     sys.exit(f"pv_fault_dataset.csv not found in {data_dir}")
 
 
+# Keep TRAINING rows only; OPERATION is never used for quantisation.
 def training_only(df):
     """Drop every OPERATION row before anything else is computed."""
     out = df[df[WINDOW_COLUMN] == "TRAINING"].reset_index(drop=True)
@@ -59,6 +64,7 @@ def training_only(df):
 def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tests=True,
         expected_dataset_sha256=DATASET_SHA256, pinned=PINNED_FILES, pinned_weights=PINNED_WEIGHTS_SHA256,
         expected_rows=3000, representatives=(5, (1, 20, 40, 60))):
+    # 1) Refuse to overwrite an earlier quantisation; check the dataset and the frozen model hashes.
     out_root = Path(out_root)
     if (out_root / INT8_REL / "quant_params.json").exists():
         raise FileExistsError(f"{out_root / INT8_REL / 'quant_params.json'} exists; quantisation outputs "
@@ -70,12 +76,14 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tes
     contract_sha = file_sha256(Path(model_dir) / "model_contract.json")
     cfg = contract_feature_config(contract)
 
+    # 2) Load TRAINING rows and check the split file agrees.
     df = training_only(pd.read_csv(data_path))                # OPERATION rows dropped here
     if expected_rows is not None and len(df) != expected_rows:
         raise ValueError(f"{len(df)} TRAINING rows, expected {expected_rows}")
     assignments, meta = load_assignments(splits_path, df, dataset_sha256=sha)
     final_training_rows(df, assignments)                      # split file agrees
 
+    # 3) The device's float32 preprocessing must match the Python reference.
     # float32 device preprocessing vs the float64 reference pipeline
     status32, z32 = preprocess_f32(raw_matrix(df), cfg)
     x64, status64 = transform(inference_frame(df), cfg)
@@ -87,9 +95,11 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tes
     if not device_check["status_identical"]:
         raise ValueError("float32 device gates differ from features.input_status")
 
+    # 4) Calibrate scales on status-OK TRAINING rows and quantise the weights to INT8.
     q = quantize_model(contract, contract_sha, z32[ok], calibration_info={
         "window": "TRAINING", "rows": int(len(df)), "dataset_sha256": sha,
         "split_version": meta["split_version"]})
+    # 5) Compare INT8 predictions with the Float32 reference on the same rows.
     y = df.loc[ok, LABEL_COLUMN].to_numpy()
     ref = float_reference_labels(x64, contract)
     int8 = int8_predict_many(z32[ok], q)
@@ -99,12 +109,14 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tes
                   "int8_input_clips": int8["input_clips"], "int8_rows_with_input_clip": int8["rows_with_input_clip"],
                   "int8_lut_clips": int8["lut_clips"]}
 
+    # 6) Golden test vectors: inputs plus the exact outputs the C code must reproduce.
     n_runs, positions = representatives
     z_inputs = golden.training_representatives(df, cfg, n_runs, positions) + golden.reference_probes(contract)
     protos = golden.class_prototypes(df, cfg)
     base = next(r for i, _, r in protos if i.startswith("NORMAL_f1.0_dt0.0"))
     g = golden.build_golden(contract, cfg, q, z_inputs, protos + golden.edge_cases(base, cfg))
 
+    # 7) Generate the C headers and run the host C tests against the golden vectors.
     gen_dir, golden_dir, int8_dir = out_root / GEN_REL, out_root / GOLDEN_REL, out_root / INT8_REL
     headers = codegen.write_headers(gen_dir, contract, contract_sha, cfg, q)
     golden_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +128,7 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tes
     if exe.exists():
         exe.unlink()
 
+    # 8) Save the INT8 parameters and a manifest of SHA-256 hashes.
     int8_dir.mkdir(parents=True, exist_ok=True)
     (int8_dir / "quant_params.json").write_text(q.to_json(), encoding="utf-8")
     files = {str(INT8_REL / "quant_params.json"): int8_dir / "quant_params.json",
@@ -126,6 +139,7 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None, run_c_tes
                 "files": {k: file_sha256(v) for k, v in sorted(files.items())}}
     (int8_dir / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
+    # 9) Write the report (TRAINING-only results; no ESP32 measurement).
     report = {
         "status": "QUANTIZATION_TRAINING_ONLY", "quant_version": QUANT_VERSION,
         "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

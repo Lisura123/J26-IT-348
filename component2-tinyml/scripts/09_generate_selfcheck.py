@@ -6,6 +6,10 @@ Reads only models/model_contract.json and models/int8/quant_params.json (both
 verified against their pinned SHA-256 values first); no dataset is used.
 --check compares instead of writing (exit 1 if the committed file differs).
 """
+# ---- Pipeline step support: build the ESP32 start-up self-check header ----
+# When:   only if the frozen model or INT8 parameters ever change (--check verifies it is up to date)
+# Reads:  models/model_contract.json, models/int8/quant_params.json (no dataset)
+# Writes: firmware/pv_fault/selfcheck/pv_selfcheck.h
 import argparse
 import json
 import sys
@@ -27,12 +31,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
+    # Verify the frozen model and INT8 hashes, then generate the header text.
     contract = verify_frozen_model(ROOT / "models")
     qp = ROOT / "models" / "int8" / "quant_params.json"
     if file_sha256(qp) != PINNED_QUANT_PARAMS:
         sys.exit("quant_params.json is not the frozen int8-v1 file")
     text = selfcheck_header(contract, file_sha256(ROOT / "models" / "model_contract.json"),
                             QuantParams.from_json(qp.read_text(encoding="utf-8")))
+    # --check: compare only; otherwise write the file.
     if a.check:
         same = OUT.exists() and OUT.read_text(encoding="utf-8") == text
         print("pv_selfcheck.h up to date" if same else "pv_selfcheck.h differs")

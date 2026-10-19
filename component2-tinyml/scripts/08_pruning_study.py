@@ -11,6 +11,10 @@ compare them with the frozen Float32 and INT8 models on status-OK TRAINING
 rows; write the study report. Nothing is trained, refitted or tuned, and no
 model artifact is written or changed.
 """
+# ---- Pipeline step 8 of 8: pruning feasibility study E1 (no retraining) ----
+# When:   already done once (docs/PRUNING.md section 9); result: evaluated, not adopted
+# Reads:  pv_fault_dataset.csv (TRAINING rows only), the frozen Float32 and INT8 models
+# Writes: results/pruning_study.json and .md (models/ is never written)
 import argparse
 import json
 import sys
@@ -50,6 +54,7 @@ def find_dataset(data_dir):
     sys.exit(f"pv_fault_dataset.csv not found in {data_dir}")
 
 
+# Keep TRAINING rows only; OPERATION is never used for this study.
 def training_only(df):
     """Drop every OPERATION row before anything else is computed."""
     out = df[df[WINDOW_COLUMN] == "TRAINING"].reset_index(drop=True)
@@ -57,6 +62,7 @@ def training_only(df):
     return out
 
 
+# Load the frozen INT8 parameters after checking their pinned hashes.
 def load_frozen_int8(int8_dir, pinned=PINNED_INT8_FILES):
     """Frozen INT8 parameters; refuses any file whose SHA-256 is not pinned."""
     int8_dir = Path(int8_dir)
@@ -70,6 +76,7 @@ def load_frozen_int8(int8_dir, pinned=PINNED_INT8_FILES):
 def run(data_path, splits_path, model_dir, out_root, code_commit=None,
         expected_dataset_sha256=DATASET_SHA256, pinned=PINNED_FILES, pinned_weights=PINNED_WEIGHTS_SHA256,
         pinned_int8=PINNED_INT8_FILES, expected_rows=3000):
+    # 1) Refuse to overwrite; check the dataset, the frozen model and the INT8 file hashes.
     out_report = Path(out_root) / REPORT_REL
     for name in ("pruning_study.json", "pruning_study.md"):
         if (out_report / name).exists():
@@ -84,12 +91,14 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None,
         raise ValueError("frozen INT8 parameters do not belong to this model contract")
     cfg = contract_feature_config(contract)
 
+    # 2) Load TRAINING rows and check the split file agrees.
     df = training_only(pd.read_csv(data_path))                # OPERATION rows dropped here
     if expected_rows is not None and len(df) != expected_rows:
         raise ValueError(f"{len(df)} TRAINING rows, expected {expected_rows}")
     assignments, meta = load_assignments(splits_path, df, dataset_sha256=sha)
     final_training_rows(df, assignments)                      # split file agrees
 
+    # 3) Preprocess with both the Python reference and the device float32 pipeline (gates must agree).
     status32, z32 = preprocess_f32(raw_matrix(df), cfg)
     x64, status64 = transform(inference_frame(df), cfg)
     status64 = status64.map(STATUS_CODES).to_numpy()
@@ -98,6 +107,7 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None,
     ok = status32 == STATUS_CODES["OK"]
     y = df.loc[ok, LABEL_COLUMN].to_numpy()
 
+    # 4) Prune in memory (10/20/30 % of weights; 2/3/5 hidden units) and compare with the frozen model.
     study = run_study(contract, q, x64, z32[ok], y)
     report = {
         "status": "PRUNING_STUDY_E1_TRAINING_ONLY", "study_version": STUDY_VERSION,
@@ -122,6 +132,7 @@ def run(data_path, splits_path, model_dir, out_root, code_commit=None,
             "ML predictions.",
         ],
     }
+    # 5) Write the report; size numbers are estimates, not ESP32 measurements.
     out_report.mkdir(parents=True, exist_ok=True)
     (out_report / "pruning_study.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     (out_report / "pruning_study.md").write_text(render(report), encoding="utf-8")

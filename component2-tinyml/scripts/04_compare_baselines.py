@@ -7,6 +7,10 @@ Writes results/baselines_phase7.json (every fit) and
 results/baselines_phase7.md (summary, v_deficit ablation, coverage).
 The OPERATION window is not used.
 """
+# ---- Pipeline step 4 of 8: compare candidate models and feature sets (model selection) ----
+# When:   after step 3; its results chose the final model (physics8 + 8-16-5 tanh MLP)
+# Reads:  pv_fault_dataset.csv (TRAINING folds only), results/splits_runwise_v1.json
+# Writes: results/baselines_phase7.json, results/baselines_phase7.md
 import argparse
 import json
 import sys
@@ -33,10 +37,12 @@ def find_dataset(data_dir):
     sys.exit(f"pv_fault_dataset.csv not found in {data_dir}")
 
 
+# Format a number for the report ('–' when missing).
 def fmt(x, nd=3):
     return "–" if x is None or pd.isna(x) else f"{x:.{nd}f}"
 
 
+# Build the Markdown report: metrics per protocol, the v_deficit ablation and coverage.
 def render(result, table, sha):
     env = result["environment"]
     L = ["# Phase 7: baseline comparison (TRAINING window only)", "",
@@ -106,17 +112,21 @@ def main():
     ap.add_argument("--feature-sets", nargs="+", default=list(FEATURE_SETS), choices=list(FEATURE_SETS))
     a = ap.parse_args()
 
+    # 1) Load the dataset and the saved splits; the dataset fingerprint must match the split file.
     path = find_dataset(a.data_dir)
     sha = file_sha256(path)
     df = pd.read_csv(path)
     assignments, meta = load_assignments(a.splits, df, dataset_sha256=sha)
+    # 2) Train and score every model x feature set x seed on the TRAINING folds (OPERATION not used).
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = run_comparison(df, assignments, protocols=a.protocols, models=a.models,
                                 feature_sets=a.feature_sets, seeds=tuple(a.seeds))
+    # 3) Add provenance and any training warnings to the result.
     result["dataset_sha256"] = sha
     result["split_version"] = meta["split_version"]
     result["warnings"] = sorted({f"{w.category.__name__}: {str(w.message)[:160]}" for w in caught})
+    # 4) Summarise, then write the JSON (every fit) and Markdown reports.
     table = summary_table(result)
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)

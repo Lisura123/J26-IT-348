@@ -10,6 +10,10 @@ Usage:
 The final test writes results/operation_eval.json and .md and refuses to run
 if either file already exists. Nothing is fitted or changed.
 """
+# ---- Pipeline step 6 of 8: the independent final test on OPERATION, run ONCE ----
+# When:   already done once (results/operation_eval.*); a repeat is refused by run() below
+# Reads:  pv_fault_dataset.csv, the frozen models/ (nothing is fitted or changed)
+# Writes: results/operation_eval.json and .md (never overwritten)
 import argparse
 import json
 import sys
@@ -26,6 +30,7 @@ from tinyml.splits import load_assignments  # noqa: E402
 from tinyml.train import git_commit  # noqa: E402
 from tinyml.validate import file_sha256  # noqa: E402
 
+# Output names: the official final test, and the labelled TRAINING-only plumbing check.
 FINAL_NAMES = ("operation_eval.json", "operation_eval.md")
 DRY_RUN_NAMES = ("dry_run_training_eval.json", "dry_run_training_eval.md")
 SHORT = {"NORMAL": "NOR", "PARTIAL_SHADING": "PAR", "DUST": "DUS", "OPEN_CIRCUIT": "OPE", "SHORT_CIRCUIT": "SHO"}
@@ -42,6 +47,7 @@ def fmt(x, nd=3):
     return "–" if x is None else f"{x:.{nd}f}"
 
 
+# Build the Markdown report: coverage, metrics, confusion matrix, OPEN/SHORT safety, latency.
 def render(r):
     dry = r["status"] == STATUS_DRY_RUN
     m, cov = r["classification"], r["coverage"]
@@ -158,6 +164,7 @@ def run(data_path, splits_path, model_dir, out_dir, confirm_final_test=False, dr
     overwrites existing results and is refused once the official result is
     committed (allow_repeat_operation_eval=True would need a separately
     approved protocol; no notebook passes it)."""
+    # 1) Safety checks first: never repeat the recorded test, never overwrite results.
     out = Path(out_dir)
     names = DRY_RUN_NAMES if dry_run_training else FINAL_NAMES
     if not dry_run_training and official_result is not None and Path(official_result).exists() \
@@ -170,12 +177,15 @@ def run(data_path, splits_path, model_dir, out_dir, confirm_final_test=False, dr
         if existing:
             raise FileExistsError(f"{existing} already exist in {out}; the OPERATION final test is run "
                                   "once and its results are never overwritten")
+    # 2) Load the dataset and the splits (the dataset fingerprint must match).
     sha = file_sha256(data_path)
     df = pd.read_csv(data_path)
     assignments, meta = load_assignments(splits_path, df, dataset_sha256=sha)
+    # 3) Evaluate the frozen model on the OPERATION window (or TRAINING for a dry run).
     result = run_evaluation(df, assignments, model_dir, sha, split_meta=meta,
                             confirm_final_test=confirm_final_test, dry_run_training=dry_run_training,
                             code_commit=code_commit or git_commit(ROOT), **kw)
+    # 4) Write the JSON and Markdown reports.
     out.mkdir(parents=True, exist_ok=True)
     mode = "w" if dry_run_training else "x"          # "x": fail if the file appeared meanwhile
     with open(out / names[0], mode, encoding="utf-8") as f:
