@@ -28,8 +28,14 @@ def staleness_factor(tau):
 
 def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
            scheduler=False, async_late=False, staleness=False, fairness=False,
-           scenario="trace", tag=None, verbose=True, save=True):
-    site_data, (Xv, yv), _ = pv_data.get_data()
+           scenario="trace", tag=None, verbose=True, save=True,
+           data=None, init_weights=None):
+    # PENDING SAMUDI REVIEW (integration/member2-member3-fl): optional Member 2 inputs.
+    # data: (site_data, (Xv, yv), _) in the pv_data.get_data() form; init_weights:
+    # starting {W1, b1, W2, b2}, copied and never changed. Both None = original behaviour.
+    if (data is not None or init_weights is not None) and activation != "tanh":
+        raise ValueError("the Member 2 integration path needs activation='tanh'")
+    site_data, (Xv, yv), _ = data if data is not None else pv_data.get_data()
     clients = {s: SiteClient(s, *site_data[s], activation, seed) for s in pv_data.SITES}
     sp = scen.SCENARIOS[scenario]
     deadline_h = sp["deadline_h"] if sp else DEADLINE_H
@@ -40,7 +46,12 @@ def run_fl(seed=0, activation="tanh", compression="int8", error_feedback=False,
     base_transfer = dl.load_transmissions().groupby("protocol").transfer_duration_s.median()
     trace = dl.load_transmissions().set_index(["round_id", "site_id"])
     sched = Scheduler(pv_data.SITES, link_stats(nr.lm)) if scheduler else None
-    w = mlp.init_params(np.random.default_rng(seed), activation)
+    if init_weights is None:
+        w = mlp.init_params(np.random.default_rng(seed), activation)
+    else:                                       # PENDING SAMUDI REVIEW
+        if any(np.shape(init_weights[n]) != s for n, s in mlp.LAYOUT):
+            raise ValueError("init_weights do not match mlp.LAYOUT")
+        w = mlp.unflatten(mlp.flatten(init_weights))      # new arrays in LAYOUT order
     residual = {s: np.zeros(229) for s in pv_data.SITES}
     ok = {s: 0 for s in pv_data.SITES}          # on-time deliveries so far
     tries = {s: 0 for s in pv_data.SITES}       # uploads attempted so far
