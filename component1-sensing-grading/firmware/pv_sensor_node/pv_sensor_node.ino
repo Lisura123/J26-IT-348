@@ -14,6 +14,25 @@
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
 #define CALIBRATION_READINGS 20
 
+#define WINDOW_SIZE 30        // entropy uses the last 30 readings (2.5 min)
+#define MIN_READINGS 10       // start entropy after 10 readings
+#define NUM_INDICATORS 5
+
+// noise floor: a change must be bigger than 3 x noise to count as information
+#define NOISE_SIGMAS 3.0
+#define DUST_NOISE 1.0        // % (dust has no Kalman filter, so a fixed value)
+
+// fixed ranges for the absolute score (first values, tune with real data)
+#define TEMP_RISE_BAD 20.0    // C  (0 C = good, 20 C or more = bad)
+#define DUST_BAD 30.0         // %  (0 % = good, 30 % or more = bad)
+
+// TEMPORARY: panel (-) is not connected to GND yet, so the INA219 cannot
+// measure the bus voltage. The load is a known 120 ohm resistor, so we
+// calculate the voltage with Ohm's law: V = I x R.
+// Set this to false when the GND wire (panel - to GND) is added.
+#define USE_OHMS_LAW_VOLTAGE true
+#define LOAD_OHMS 120.0
+
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
 OneWire oneWire(ONE_WIRE_PIN);
@@ -23,7 +42,9 @@ DallasTemperature probes(&oneWire);
 DeviceAddress PANEL_PROBE = {0x28, 0x43, 0x8B, 0x6D, 0x00, 0x00, 0x00, 0x84};
 DeviceAddress AIR_PROBE   = {0x28, 0x3B, 0xFF, 0x70, 0x00, 0x00, 0x00, 0x6A};
 
-// ---------- Kalman filter ----------
+// =====================================================================
+// Stage 2: Kalman filter
+// =====================================================================
 
 struct Kalman {
   float qRatio;    // Q = qRatio x R
@@ -92,10 +113,212 @@ float kalmanUpdate(Kalman &k, float z) {
   return k.x;
 }
 
-int readingNumber = 0;
-bool calibrated = false;
+// =====================================================================
+// Stage 3: Entropy weighting
+// =====================================================================
 
-// ---------- dust ----------
+// the last 30 filtered readings (circular buffer)
+float bufPower[WINDOW_SIZE];
+float bufVoltage[WINDOW_SIZE];
+float bufCurrent[WINDOW_SIZE];
+float bufLux[WINDOW_SIZE];
+float bufTempRise[WINDOW_SIZE];
+float bufDust[WINDOW_SIZE];
+int bufCount = 0;   // how many readings are in the buffer
+int bufNext = 0;    // where the next reading goes
+
+// indicator names and type (same order as INDICATORS in Python)
+const char* IND_NAMES[NUM_INDICATORS] = {"power", "voltage", "current", "temp_rise", "dust"};
+const bool IND_BENEFIT[NUM_INDICATORS] = {true, true, true, false, false};
+
+float weights[NUM_INDICATORS];
+float absScore[NUM_INDICATORS];   // newest reading on the fixed scale (1 = good)
+float healthScore = NAN;
+
+// best healthy reference seen since the ESP32 started
+float bestRefPower = 0;
+float bestRefCurrent = 0;
+float bestRefVoltage = 0;
+
+void addToWindow(float power, float voltage, float current, float lux,
+                 float tempRise, float dust) {
+  bufPower[bufNext] = power;
+  bufVoltage[bufNext] = voltage;
+  bufCurrent[bufNext] = current;
+  bufLux[bufNext] = lux;
+  bufTempRise[bufNext] = tempRise;
+  bufDust[bufNext] = dust;
+
+  bufNext = (bufNext + 1) % WINDOW_SIZE;
+  if (bufCount < WINDOW_SIZE) bufCount++;
+}
+
+// 95th percentile with linear interpolation (same as pandas quantile)
+float percentile95(float* values, int n) {
+  float sorted[WINDOW_SIZE];
+  for (int i = 0; i < n; i++) sorted[i] = values[i];
+
+  // simple insertion sort (n is small)
+  for (int i = 1; i < n; i++) {
+    float key = sorted[i];
+    int j = i - 1;
+    while (j >= 0 && sorted[j] > key) {
+      sorted[j + 1] = sorted[j];
+      j--;
+    }
+    sorted[j + 1] = key;
+  }
+
+  float pos = 0.95 * (n - 1);
+  int low = (int)pos;
+  float frac = pos - low;
+  if (low + 1 >= n) return sorted[n - 1];
+  return sorted[low] + frac * (sorted[low + 1] - sorted[low]);
+}
+
+// keep a value between 0 and 1
+float clamp01(float v) {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
+
+// value / reference, kept between 0 and 1
+float ratio(float value, float reference) {
+  if (reference < 1e-9) return 0;
+  return clamp01(value / reference);
+}
+
+// noise of a ratio: 3 x sqrt(R) / reference
+float ratioNoise(float r, float reference) {
+  if (reference < 1e-9) return 1e9;   // no signal: never informative
+  return NOISE_SIGMAS * sqrt(r) / reference;
+}
+
+void runEntropy() {
+  int n = bufCount;
+
+  float ind[NUM_INDICATORS][WINDOW_SIZE];
+  float powerPerIrr[WINDOW_SIZE];
+  float currentPerIrr[WINDOW_SIZE];
+  float voltages[WINDOW_SIZE];
+  float currents[WINDOW_SIZE];
+
+  // order: oldest reading first, newest reading last
+  int start = (bufCount < WINDOW_SIZE) ? 0 : bufNext;
+  int idx[WINDOW_SIZE];
+  for (int i = 0; i < n; i++) idx[i] = (start + i) % WINDOW_SIZE;
+
+  for (int i = 0; i < n; i++) {
+    int b = idx[i];
+    float irr = bufLux[b] / 120.0;    // W/m2 (data contract: lux / 120)
+    if (irr < 1) irr = 1;
+    powerPerIrr[i] = bufPower[b] / irr;
+    currentPerIrr[i] = bufCurrent[b] / irr;
+    voltages[i] = bufVoltage[b];
+    currents[i] = bufCurrent[b];
+  }
+
+  // --- healthy reference ---
+  // 95th percentile of the window, but never lower than the best one seen
+  // so a panel that stays faulty does not become the new "healthy"
+  float winRefPower = percentile95(powerPerIrr, n);
+  float winRefCurrent = percentile95(currentPerIrr, n);
+  float winRefVoltage = percentile95(voltages, n);
+  if (winRefPower > bestRefPower) bestRefPower = winRefPower;
+  if (winRefCurrent > bestRefCurrent) bestRefCurrent = winRefCurrent;
+  if (winRefVoltage > bestRefVoltage) bestRefVoltage = winRefVoltage;
+
+  // --- make_indicators() ---
+  for (int i = 0; i < n; i++) {
+    int b = idx[i];
+    ind[0][i] = ratio(powerPerIrr[i], bestRefPower);
+    ind[1][i] = ratio(voltages[i], bestRefVoltage);
+    ind[2][i] = ratio(currentPerIrr[i], bestRefCurrent);
+    ind[3][i] = bufTempRise[b];
+    ind[4][i] = bufDust[b];
+  }
+
+  // --- absolute score of the newest reading (fixed ranges, 1 = good) ---
+  int last = n - 1;
+  absScore[0] = ind[0][last];   // ratios are already 0..1
+  absScore[1] = ind[1][last];
+  absScore[2] = ind[2][last];
+  absScore[3] = clamp01((TEMP_RISE_BAD - ind[3][last]) / TEMP_RISE_BAD);
+  absScore[4] = clamp01((DUST_BAD - ind[4][last]) / DUST_BAD);
+
+  // --- noise floor for each indicator ---
+  // a window range smaller than this is just sensor noise, not information
+  float currentRef = percentile95(currents, n);
+  float noiseFloor[NUM_INDICATORS];
+  noiseFloor[1] = ratioNoise(kfVoltage.r, winRefVoltage);
+  noiseFloor[2] = ratioNoise(kfCurrent.r, currentRef);
+  noiseFloor[0] = noiseFloor[1] + noiseFloor[2];   // power = V x I
+  noiseFloor[3] = NOISE_SIGMAS * sqrt(kfSurface.r + kfAmbient.r);
+  noiseFloor[4] = DUST_NOISE;
+
+  // --- normalize() for the weights (window min-max) ---
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    float lo = ind[j][0];
+    float hi = ind[j][0];
+    for (int i = 1; i < n; i++) {
+      if (ind[j][i] < lo) lo = ind[j][i];
+      if (ind[j][i] > hi) hi = ind[j][i];
+    }
+
+    for (int i = 0; i < n; i++) {
+      if (hi - lo < noiseFloor[j]) {
+        ind[j][i] = 1.0;   // only noise in the window = no information
+      } else if (IND_BENEFIT[j]) {
+        ind[j][i] = (ind[j][i] - lo) / (hi - lo);
+      } else {
+        ind[j][i] = (hi - ind[j][i]) / (hi - lo);
+      }
+    }
+  }
+
+  // --- entropy_weights() ---
+  float info[NUM_INDICATORS];
+  float infoSum = 0;
+
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    // step 1: share of each reading in the column
+    double total = 0;
+    for (int i = 0; i < n; i++) total += ind[j][i] + 1e-12;
+
+    // step 2: entropy (0 = lots of information, 1 = no information)
+    double e = 0;
+    for (int i = 0; i < n; i++) {
+      double p = (ind[j][i] + 1e-12) / total;
+      e -= p * log(p);
+    }
+    e = e / log(n);
+
+    // step 3: the information part
+    info[j] = 1 - e;
+    if (info[j] < 0) info[j] = 0;
+    infoSum += info[j];
+  }
+
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    if (infoSum < 1e-9) {
+      weights[j] = 1.0 / NUM_INDICATORS;   // nothing changes: equal weights
+    } else {
+      weights[j] = info[j] / infoSum;
+    }
+  }
+
+  // --- health score: adaptive weights x absolute indicator scores ---
+  float score = 0;
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    score += weights[j] * absScore[j];
+  }
+  healthScore = score * 100.0;
+}
+
+// =====================================================================
+// Dust sensor
+// =====================================================================
 
 volatile unsigned long lowStart = 0;
 volatile unsigned long lowTotal = 0;
@@ -110,7 +333,9 @@ void IRAM_ATTR dustChanged() {
   }
 }
 
-// ---------- helpers ----------
+// =====================================================================
+// Helpers
+// =====================================================================
 
 // DS18B20 sends -127 when the probe is not found, and 85 before the first read
 float cleanTemp(float t) {
@@ -128,7 +353,14 @@ void printPair(String name, float raw, float filtered, int decimals, String unit
   Serial.print(" | ");
 }
 
+int readingNumber = 0;
+bool calibrated = false;
+float lastTempRise = 0;
 unsigned long lastRead = 0;
+
+// =====================================================================
+// setup and loop
+// =====================================================================
 
 void setup() {
   Serial.begin(115200);
@@ -158,6 +390,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(DUST_PIN), dustChanged, CHANGE);
   dustWindowStart = millis();
 
+  if (USE_OHMS_LAW_VOLTAGE) {
+    Serial.println("NOTE: voltage is calculated as I x 120 ohm (GND wire not added yet)");
+  }
   Serial.println("Type 1 = relay ON (panel cut), 0 = relay OFF");
   Serial.print("Calibrating Kalman filter for ");
   Serial.print(CALIBRATION_READINGS * READ_EVERY_MS / 1000);
@@ -192,9 +427,18 @@ void loop() {
   lastRead = millis();
   readingNumber++;
 
-  // ---- read the sensors ----
-  float voltage = ina219.getBusVoltage_V() + ina219.getShuntVoltage_mV() / 1000.0;
+  // ---- Stage 1: read the raw sensors ----
   float current = ina219.getCurrent_mA();
+  float shuntV = ina219.getShuntVoltage_mV() / 1000.0;
+  float voltage;
+
+  if (USE_OHMS_LAW_VOLTAGE) {
+    // V = I x R on the load, plus the small drop on the 0.1 ohm shunt
+    voltage = (current / 1000.0) * LOAD_OHMS + shuntV;
+  } else {
+    // measured directly: bus voltage (VIN- to GND) + shunt voltage
+    voltage = ina219.getBusVoltage_V() + shuntV;
+  }
 
   float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
   float lux = lightV * 200.0;   // rough value with the 10k resistor on the board
@@ -203,7 +447,7 @@ void loop() {
   float surface = cleanTemp(probes.getTempC(PANEL_PROBE));
   float ambient = cleanTemp(probes.getTempC(AIR_PROBE));
 
-  // ---- calibration: first 20 readings ----
+  // ---- Kalman calibration: first 20 readings ----
   if (!calibrated) {
     addJump(kfVoltage, voltage);
     addJump(kfCurrent, current);
@@ -232,22 +476,18 @@ void loop() {
       Serial.print("  surface R = "); Serial.println(kfSurface.r, 6);
       Serial.print("  ambient R = "); Serial.println(kfAmbient.r, 6);
       Serial.println();
-      Serial.println("Format: raw -> filtered");
-      Serial.println();
     }
     return;
   }
 
-  // ---- Kalman filter ----
+  // ---- Stage 2: Kalman filter ----
   float voltageKf = kalmanUpdate(kfVoltage, voltage);
   float currentKf = kalmanUpdate(kfCurrent, current);
   float surfaceKf = kalmanUpdate(kfSurface, surface);
   float ambientKf = kalmanUpdate(kfAmbient, ambient);
+  float powerKf = voltageKf * currentKf;   // same as my pipeline
 
-  // power from the filtered values (same as my pipeline)
-  float powerKf = voltageKf * currentKf;
-
-  printPair("V", voltage, voltageKf, 3, " V");
+  printPair(USE_OHMS_LAW_VOLTAGE ? "V(calc)" : "V", voltage, voltageKf, 3, " V");
   printPair("I", current, currentKf, 2, " mA");
   Serial.print("P: ");        Serial.print(powerKf, 4);
   Serial.print(" mW | Light: "); Serial.print(lux, 0);
@@ -261,4 +501,47 @@ void loop() {
     Serial.print(dustPercent, 2);
     Serial.println(" %");
   }
+
+  // ---- Stage 3: entropy weighting ----
+  float tempRise = surfaceKf - ambientKf;
+  if (isnan(tempRise)) tempRise = lastTempRise;   // keep the last good value
+  lastTempRise = tempRise;
+
+  float dust = (dustPercent < 0) ? 0 : dustPercent;
+
+  addToWindow(powerKf, voltageKf, currentKf, lux, tempRise, dust);
+
+  if (bufCount < MIN_READINGS) {
+    Serial.print("   Entropy: collecting readings ");
+    Serial.print(bufCount);
+    Serial.print("/");
+    Serial.println(MIN_READINGS);
+    Serial.println();
+    return;
+  }
+
+  runEntropy();
+
+  Serial.print("   Weights (window ");
+  Serial.print(bufCount);
+  Serial.print("): ");
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    Serial.print(IND_NAMES[j]);
+    Serial.print(" ");
+    Serial.print(weights[j], 3);
+    if (j < NUM_INDICATORS - 1) Serial.print(", ");
+  }
+  Serial.println();
+
+  Serial.print("   Indicators (1 = good): ");
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    Serial.print(IND_NAMES[j]);
+    Serial.print(" ");
+    Serial.print(absScore[j], 2);
+    if (j < NUM_INDICATORS - 1) Serial.print(", ");
+  }
+  Serial.print(" | Score: ");
+  Serial.print(healthScore, 1);
+  Serial.println(" / 100");
+  Serial.println();
 }
