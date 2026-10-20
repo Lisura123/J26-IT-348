@@ -26,6 +26,9 @@
 #define TEMP_RISE_BAD 20.0    // C  (0 C = good, 20 C or more = bad)
 #define DUST_BAD 30.0         // %  (0 % = good, 30 % or more = bad)
 
+// no grading in the dark (power is 0 at night, that is not a fault)
+#define MIN_GRADING_LUX 50.0
+
 // TEMPORARY: panel (-) is not connected to GND yet, so the INA219 cannot
 // measure the bus voltage. The load is a known 120 ohm resistor, so we
 // calculate the voltage with Ohm's law: V = I x R.
@@ -133,7 +136,7 @@ const bool IND_BENEFIT[NUM_INDICATORS] = {true, true, true, false, false};
 
 float weights[NUM_INDICATORS];
 float absScore[NUM_INDICATORS];   // newest reading on the fixed scale (1 = good)
-float healthScore = NAN;
+float healthScore = NAN;          // entropy weighted score (0 - 100)
 
 // best healthy reference seen since the ESP32 started
 float bestRefPower = 0;
@@ -308,12 +311,115 @@ void runEntropy() {
     }
   }
 
-  // --- health score: adaptive weights x absolute indicator scores ---
+  // --- weighted score: adaptive weights x absolute indicator scores ---
   float score = 0;
   for (int j = 0; j < NUM_INDICATORS; j++) {
     score += weights[j] * absScore[j];
   }
   healthScore = score * 100.0;
+}
+
+// =====================================================================
+// Stage 4: Fuzzy logic
+// =====================================================================
+
+// trapezoid membership: 0 before a, rises a->b, 1 from b to c, falls c->d
+float trap(float x, float a, float b, float c, float d) {
+  if (x < a || x > d) return 0;
+  if (x >= b && x <= c) return 1;
+  if (x < b) return (b == a) ? 1 : (x - a) / (b - a);
+  return (d == c) ? 1 : (d - x) / (d - c);
+}
+
+// triangle membership: peak at b
+float tri(float x, float a, float b, float c) {
+  return trap(x, a, b, b, c);
+}
+
+// output sets (health 0 - 100)
+float outFaulty(float y)   { return trap(y, 0, 0, 20, 40); }
+float outDegraded(float y) { return tri(y, 30, 50, 70); }
+float outHealthy(float y)  { return trap(y, 60, 80, 100, 100); }
+
+#define NUM_RULES 7
+const char* RULE_REASON[NUM_RULES] = {
+  "electrical fault (open or short circuit)",   // R1
+  "panel overheating",                          // R2
+  "very low output",                            // R3
+  "output lower than normal",                   // R4
+  "dust on the panel",                          // R5
+  "electrical output dropping",                 // R6
+  "all indicators good"                         // R7
+};
+
+float fuzzyHealth = NAN;
+String fuzzyStatus = "";
+String fuzzyReason = "";
+
+void runFuzzy() {
+  // ---- inputs ----
+  float S = healthScore;                       // 0 - 100
+  float E = min(absScore[1], absScore[2]);     // worst of voltage and current
+  float T = absScore[3];                       // 1 = cool, 0 = hot
+  float D = absScore[4];                       // 1 = clean, 0 = dirty
+
+  // ---- fuzzify ----
+  float sLow  = trap(S, 0, 0, 30, 50);
+  float sMed  = tri(S, 30, 55, 80);
+  float sHigh = trap(S, 65, 85, 100, 100);
+
+  float eBad  = trap(E, 0, 0, 0.3, 0.5);
+  float eOk   = tri(E, 0.3, 0.6, 0.85);
+  float eGood = trap(E, 0.7, 0.9, 1, 1);
+
+  float tHot    = trap(T, 0, 0, 0.25, 0.5);    // 0.25 = temp rise of 15 C
+  float tNormal = trap(T, 0.25, 0.5, 1, 1);
+
+  float dDirty = trap(D, 0, 0, 0.4, 0.6);
+  float dClean = trap(D, 0.4, 0.6, 1, 1);
+
+  // ---- rules (AND = min) ----
+  float rule[NUM_RULES];
+  rule[0] = eBad;                                           // R1 -> FAULTY
+  rule[1] = tHot;                                           // R2 -> FAULTY
+  rule[2] = sLow;                                           // R3 -> FAULTY
+  rule[3] = min(sMed, 1 - eBad);                            // R4 -> DEGRADED
+  rule[4] = min(dDirty, eGood);                             // R5 -> DEGRADED
+  rule[5] = eOk;                                            // R6 -> DEGRADED
+  rule[6] = min(min(sHigh, eGood), min(tNormal, dClean));   // R7 -> HEALTHY
+
+  // ---- combine rules of the same output (OR = max) ----
+  float faulty   = max(max(rule[0], rule[1]), rule[2]);
+  float degraded = max(max(rule[3], rule[4]), rule[5]);
+  float healthy  = rule[6];
+
+  // ---- defuzzify (centroid) ----
+  float sum = 0;
+  float weightedSum = 0;
+  for (int y = 0; y <= 100; y++) {
+    float mu = max(max(min(faulty, outFaulty(y)),
+                       min(degraded, outDegraded(y))),
+                   min(healthy, outHealthy(y)));
+    sum += mu;
+    weightedSum += mu * y;
+  }
+
+  if (sum < 1e-6) {
+    fuzzyHealth = S;     // no rule fired: use the weighted score
+  } else {
+    fuzzyHealth = weightedSum / sum;
+  }
+
+  if (fuzzyHealth >= 70) fuzzyStatus = "HEALTHY";
+  else if (fuzzyHealth >= 40) fuzzyStatus = "DEGRADED";
+  else fuzzyStatus = "FAULTY";
+
+  // reason = the rule that fired the most
+  int best = 0;
+  for (int i = 1; i < NUM_RULES; i++) {
+    if (rule[i] > rule[best]) best = i;
+  }
+  fuzzyReason = String("R") + (best + 1) + " " + RULE_REASON[best];
 }
 
 // =====================================================================
@@ -522,9 +628,7 @@ void loop() {
 
   runEntropy();
 
-  Serial.print("   Weights (window ");
-  Serial.print(bufCount);
-  Serial.print("): ");
+  Serial.print("   Weights: ");
   for (int j = 0; j < NUM_INDICATORS; j++) {
     Serial.print(IND_NAMES[j]);
     Serial.print(" ");
@@ -540,8 +644,24 @@ void loop() {
     Serial.print(absScore[j], 2);
     if (j < NUM_INDICATORS - 1) Serial.print(", ");
   }
-  Serial.print(" | Score: ");
+  Serial.print(" | Weighted score: ");
   Serial.print(healthScore, 1);
   Serial.println(" / 100");
+
+  // ---- Stage 4: fuzzy logic ----
+  if (lux < MIN_GRADING_LUX) {
+    Serial.println("   Fuzzy: not enough light to grade the panel");
+    Serial.println();
+    return;
+  }
+
+  runFuzzy();
+
+  Serial.print("   >> HEALTH: ");
+  Serial.print(fuzzyHealth, 1);
+  Serial.print(" / 100 -> ");
+  Serial.print(fuzzyStatus);
+  Serial.print(" | Reason: ");
+  Serial.println(fuzzyReason);
   Serial.println();
 }
