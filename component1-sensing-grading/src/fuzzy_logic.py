@@ -10,8 +10,12 @@ except ImportError:
 # (so one changing indicator cannot take all the weight)
 ENTROPY_SHARE = 0.5
 
+# fixed ranges for the score of each indicator (1 = good, 0 = bad)
 TEMP_RISE_BAD = 20.0    # C above a healthy panel
 DUST_BAD = 30.0         # % (DSM501B)
+
+# no grading in the dark (power is 0 at night, that is not a fault)
+MIN_GRADING_LUX = 50.0
 
 
 def trap(x, a, b, c, d):
@@ -87,7 +91,11 @@ def fuzzy_grade(S, E, T, D):
 
 
 def health_status(score):
-    return np.where(score >= 70, "HEALTHY", np.where(score >= 40, "DEGRADED", "FAULTY"))
+    # NaN score = not graded (too dark)
+    score = np.asarray(score, dtype=float)
+    return np.where(np.isnan(score), "NOT_GRADED",
+           np.where(score >= 70, "HEALTHY",
+           np.where(score >= 40, "DEGRADED", "FAULTY")))
 
 
 def run_fuzzy_stage(df):
@@ -102,7 +110,11 @@ def run_fuzzy_stage(df):
     health = fuzzy_grade(S.to_numpy(), E.to_numpy(),
                          scores["temp_rise"].to_numpy(), scores["dust_level"].to_numpy())
 
-    df["weighted_score"] = S.round(2)
+    # too dark to grade: no score (left out when sent to the backend)
+    dark = (df["irradiance_lux"] < MIN_GRADING_LUX).to_numpy()
+    health = np.where(dark, np.nan, health)
+
+    df["weighted_score"] = S.where(~dark).round(2)
     df["health_score"] = np.round(health, 2)
     df["health_status"] = health_status(health)
     return df

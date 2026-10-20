@@ -1,12 +1,8 @@
 #include <Wire.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <time.h>
 #include <Adafruit_INA219.h>
 #include <Adafruit_ADS1X15.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include "secrets.h"
 
 #define SDA_PIN 21
 #define SCL_PIN 22
@@ -14,477 +10,28 @@
 #define DUST_PIN 35
 #define RELAY_PIN 26
 
-// my device in the group data contract (reference/sites.csv)
-#define SITE_ID   "SITE-A"
-#define DEVICE_ID "ESP32-A01"
-#define PANEL_ID  "PV-A01"
-
-#define READ_EVERY_MS 5000    // same as the dataset (one reading every 5 s)
+#define READ_EVERY_MS 2000    // fast, so the demo reacts quickly
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
-#define DUST_WARMUP_MS 60000  // DSM501B needs about 1 min to warm up after power on
-#define CALIBRATION_READINGS 20
-
-#define WINDOW_SIZE 30        // entropy uses the last 30 readings (2.5 min)
-#define MIN_READINGS 10       // start entropy after 10 readings
-#define NUM_INDICATORS 5
-
-// noise floor: a change must be bigger than 3 x noise to count as information
-#define NOISE_SIGMAS 3.0
-#define DUST_NOISE 1.0        // % (dust has no Kalman filter, so a fixed value)
-
-// combined weighting: part from entropy, the rest shared equally
-// 0.5 -> every indicator gets at least 0.5 / 5 = 10 %
-#define ENTROPY_SHARE 0.5
-
-// fixed ranges for the absolute score (first values, tune with real data)
-#define TEMP_RISE_BAD 20.0    // C  (0 C = good, 20 C or more = bad)
-#define DUST_BAD 30.0         // %  (0 % = good, 30 % or more = bad)
-
-// no grading in the dark (power is 0 at night, that is not a fault)
-#define MIN_GRADING_LUX 50.0
-
-// TEMPORARY: panel (-) is not connected to GND yet, so the INA219 cannot
-// measure the bus voltage. The load is a known 120 ohm resistor, so we
-// calculate the voltage with Ohm's law: V = I x R.
-// Set this to false when the GND wire (panel - to GND) is added.
-#define USE_OHMS_LAW_VOLTAGE true
+#define DUST_WARMUP_MS 60000  // and about 1 min to warm up
 #define LOAD_OHMS 120.0
-
-// smallest step each sensor can show (used for the smallest possible noise R)
-#define CURRENT_STEP 0.1      // mA  (INA219)
-#define VOLTAGE_STEP (USE_OHMS_LAW_VOLTAGE ? (CURRENT_STEP / 1000.0 * LOAD_OHMS) : 0.004)
-#define TEMP_STEP 0.0625      // C   (DS18B20, 12 bit)
-
-#define WIFI_RETRY_MS 30000   // try to reconnect WiFi every 30 s
-#define HTTP_TIMEOUT_MS 3000
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
 OneWire oneWire(ONE_WIRE_PIN);
 DallasTemperature probes(&oneWire);
 
-// probe addresses (checked by holding each probe)
+// "P" sticker probe = panel, the other one = air
 DeviceAddress PANEL_PROBE = {0x28, 0x43, 0x8B, 0x6D, 0x00, 0x00, 0x00, 0x84};
 DeviceAddress AIR_PROBE   = {0x28, 0x3B, 0xFF, 0x70, 0x00, 0x00, 0x00, 0x6A};
 
-// =====================================================================
-// Kalman filter data (must be above every function, because the
-// Arduino IDE puts the function list just before the first function)
-// =====================================================================
-
-struct Kalman {
-  float qRatio;    // Q = qRatio x R
-  float rMin;      // smallest R (from the sensor step size)
-  float q;
-  float r;
-  float x;         // best guess of the real value
-  float p;         // how unsure we are about x
-  bool started;
-
-  // for estimating R from the first readings
-  float lastReading;
-  bool hasLast;
-  int jumpCount;
-  float jumps[CALIBRATION_READINGS];
-};
-
-// quantization noise of a sensor with step size s is s^2 / 12
-Kalman kfVoltage = {0.3, VOLTAGE_STEP * VOLTAGE_STEP / 12.0};
-Kalman kfCurrent = {0.3, CURRENT_STEP * CURRENT_STEP / 12.0};
-Kalman kfSurface = {0.1, TEMP_STEP * TEMP_STEP / 12.0};
-Kalman kfAmbient = {0.1, TEMP_STEP * TEMP_STEP / 12.0};
-
-// =====================================================================
-// Small helpers for sorting and median
-// =====================================================================
-
-// simple insertion sort (our arrays are small)
-void sortArray(float* a, int n) {
-  for (int i = 1; i < n; i++) {
-    float key = a[i];
-    int j = i - 1;
-    while (j >= 0 && a[j] > key) {
-      a[j + 1] = a[j];
-      j--;
-    }
-    a[j + 1] = key;
-  }
-}
-
-float medianOf(float* values, int n) {
-  float sorted[CALIBRATION_READINGS];
-  for (int i = 0; i < n; i++) sorted[i] = values[i];
-  sortArray(sorted, n);
-  if (n % 2 == 1) return sorted[n / 2];
-  return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
-}
-
-// =====================================================================
-// Stage 2: Kalman filter
-// =====================================================================
-
-// save the jump between this reading and the last one
-void addJump(Kalman &k, float z) {
-  if (isnan(z)) return;
-  if (k.hasLast && k.jumpCount < CALIBRATION_READINGS) {
-    k.jumps[k.jumpCount] = z - k.lastReading;
-    k.jumpCount++;
-  }
-  k.lastReading = z;
-  k.hasLast = true;
-}
-
-// Python uses R = (std of jumps / sqrt(2))^2.
-// On the real device the light changed during calibration, and the std
-// counted that trend as noise. So here we use MAD (median absolute
-// deviation), which ignores the few big jumps:
-//   noise std of jumps = 1.4826 x MAD,  R = (that / sqrt(2))^2
-void finishCalibration(Kalman &k) {
-  float r = 0;
-  if (k.jumpCount >= 3) {
-    float med = medianOf(k.jumps, k.jumpCount);
-    float dev[CALIBRATION_READINGS];
-    for (int i = 0; i < k.jumpCount; i++) dev[i] = fabs(k.jumps[i] - med);
-    float mad = medianOf(dev, k.jumpCount);
-    float jumpStd = 1.4826 * mad;
-    r = jumpStd * jumpStd / 2.0;
-  }
-  if (r < k.rMin) r = k.rMin;   // never smaller than the sensor step noise
-  k.r = r;
-  k.q = k.qRatio * r;
-}
-
-// same as kalman_1d() in Python, one reading at a time
-float kalmanUpdate(Kalman &k, float z) {
-  if (!k.started) {
-    if (isnan(z)) return NAN;
-    k.x = z;
-    k.p = k.r;
-    k.started = true;
-    return k.x;
-  }
-
-  k.p = k.p + k.q;              // predict: we get a bit more unsure
-
-  if (!isnan(z)) {              // update only if the reading is good
-    float gain = k.p / (k.p + k.r);
-    k.x = k.x + gain * (z - k.x);
-    k.p = (1 - gain) * k.p;
-  }
-  return k.x;
-}
-
-// =====================================================================
-// Stage 3: Entropy weighting
-// =====================================================================
-
-// the last 30 filtered readings (circular buffer)
-float bufPower[WINDOW_SIZE];
-float bufVoltage[WINDOW_SIZE];
-float bufCurrent[WINDOW_SIZE];
-float bufLux[WINDOW_SIZE];
-float bufTempRise[WINDOW_SIZE];
-float bufDust[WINDOW_SIZE];
-int bufCount = 0;   // how many readings are in the buffer
-int bufNext = 0;    // where the next reading goes
-
-// indicator names and type (same order as INDICATORS in Python)
-const char* IND_NAMES[NUM_INDICATORS] = {"power", "voltage", "current", "temp_rise", "dust"};
-const bool IND_BENEFIT[NUM_INDICATORS] = {true, true, true, false, false};
-
-float entropyWeights[NUM_INDICATORS];   // only from entropy
-float weights[NUM_INDICATORS];          // used: entropy + equal
-float absScore[NUM_INDICATORS];         // newest reading on the fixed scale (1 = good)
-float healthScore = NAN;                // weighted score (0 - 100)
-
-// best healthy reference seen since the ESP32 started
-float bestRefPower = 0;
-float bestRefCurrent = 0;
-float bestRefVoltage = 0;
-
-void addToWindow(float power, float voltage, float current, float lux,
-                 float tempRise, float dust) {
-  bufPower[bufNext] = power;
-  bufVoltage[bufNext] = voltage;
-  bufCurrent[bufNext] = current;
-  bufLux[bufNext] = lux;
-  bufTempRise[bufNext] = tempRise;
-  bufDust[bufNext] = dust;
-
-  bufNext = (bufNext + 1) % WINDOW_SIZE;
-  if (bufCount < WINDOW_SIZE) bufCount++;
-}
-
-// 95th percentile with linear interpolation (same as pandas quantile)
-float percentile95(float* values, int n) {
-  float sorted[WINDOW_SIZE];
-  for (int i = 0; i < n; i++) sorted[i] = values[i];
-  sortArray(sorted, n);
-
-  float pos = 0.95 * (n - 1);
-  int low = (int)pos;
-  float frac = pos - low;
-  if (low + 1 >= n) return sorted[n - 1];
-  return sorted[low] + frac * (sorted[low + 1] - sorted[low]);
-}
-
-// keep a value between 0 and 1
-float clamp01(float v) {
-  if (v < 0) return 0;
-  if (v > 1) return 1;
-  return v;
-}
-
-// value / reference, kept between 0 and 1
-float ratio(float value, float reference) {
-  if (reference < 1e-9) return 0;
-  return clamp01(value / reference);
-}
-
-// noise of a ratio: 3 x sqrt(R) / reference
-float ratioNoise(float r, float reference) {
-  if (reference < 1e-9) return 1e9;   // no signal: never informative
-  return NOISE_SIGMAS * sqrt(r) / reference;
-}
-
-void runEntropy() {
-  int n = bufCount;
-
-  float ind[NUM_INDICATORS][WINDOW_SIZE];
-  float powerPerIrr[WINDOW_SIZE];
-  float currentPerIrr[WINDOW_SIZE];
-  float voltages[WINDOW_SIZE];
-  float currents[WINDOW_SIZE];
-
-  // order: oldest reading first, newest reading last
-  int start = (bufCount < WINDOW_SIZE) ? 0 : bufNext;
-  int idx[WINDOW_SIZE];
-  for (int i = 0; i < n; i++) idx[i] = (start + i) % WINDOW_SIZE;
-
-  for (int i = 0; i < n; i++) {
-    int b = idx[i];
-    float irr = bufLux[b] / 120.0;    // W/m2 (data contract: lux / 120)
-    if (irr < 1) irr = 1;
-    powerPerIrr[i] = bufPower[b] / irr;
-    currentPerIrr[i] = bufCurrent[b] / irr;
-    voltages[i] = bufVoltage[b];
-    currents[i] = bufCurrent[b];
-  }
-
-  // --- healthy reference ---
-  // 95th percentile of the window, but never lower than the best one seen
-  // so a panel that stays faulty does not become the new "healthy"
-  float winRefPower = percentile95(powerPerIrr, n);
-  float winRefCurrent = percentile95(currentPerIrr, n);
-  float winRefVoltage = percentile95(voltages, n);
-  if (winRefPower > bestRefPower) bestRefPower = winRefPower;
-  if (winRefCurrent > bestRefCurrent) bestRefCurrent = winRefCurrent;
-  if (winRefVoltage > bestRefVoltage) bestRefVoltage = winRefVoltage;
-
-  // --- make_indicators() ---
-  for (int i = 0; i < n; i++) {
-    int b = idx[i];
-    ind[0][i] = ratio(powerPerIrr[i], bestRefPower);
-    ind[1][i] = ratio(voltages[i], bestRefVoltage);
-    ind[2][i] = ratio(currentPerIrr[i], bestRefCurrent);
-    ind[3][i] = bufTempRise[b];
-    ind[4][i] = bufDust[b];
-  }
-
-  // --- absolute score of the newest reading (fixed ranges, 1 = good) ---
-  int last = n - 1;
-  absScore[0] = ind[0][last];   // ratios are already 0..1
-  absScore[1] = ind[1][last];
-  absScore[2] = ind[2][last];
-  absScore[3] = clamp01((TEMP_RISE_BAD - ind[3][last]) / TEMP_RISE_BAD);
-  absScore[4] = clamp01((DUST_BAD - ind[4][last]) / DUST_BAD);
-
-  // --- noise floor for each indicator ---
-  // a window range smaller than this is just sensor noise, not information
-  float currentRef = percentile95(currents, n);
-  float noiseFloor[NUM_INDICATORS];
-  noiseFloor[1] = ratioNoise(kfVoltage.r, winRefVoltage);
-  noiseFloor[2] = ratioNoise(kfCurrent.r, currentRef);
-  noiseFloor[0] = noiseFloor[1] + noiseFloor[2];   // power = V x I
-  noiseFloor[3] = NOISE_SIGMAS * sqrt(kfSurface.r + kfAmbient.r);
-  noiseFloor[4] = DUST_NOISE;
-
-  // --- normalize() for the weights (window min-max) ---
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    float lo = ind[j][0];
-    float hi = ind[j][0];
-    for (int i = 1; i < n; i++) {
-      if (ind[j][i] < lo) lo = ind[j][i];
-      if (ind[j][i] > hi) hi = ind[j][i];
-    }
-
-    for (int i = 0; i < n; i++) {
-      if (hi - lo < noiseFloor[j]) {
-        ind[j][i] = 1.0;   // only noise in the window = no information
-      } else if (IND_BENEFIT[j]) {
-        ind[j][i] = (ind[j][i] - lo) / (hi - lo);
-      } else {
-        ind[j][i] = (hi - ind[j][i]) / (hi - lo);
-      }
-    }
-  }
-
-  // --- entropy_weights() ---
-  float info[NUM_INDICATORS];
-  float infoSum = 0;
-
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    // step 1: share of each reading in the column
-    double total = 0;
-    for (int i = 0; i < n; i++) total += ind[j][i] + 1e-12;
-
-    // step 2: entropy (0 = lots of information, 1 = no information)
-    double e = 0;
-    for (int i = 0; i < n; i++) {
-      double p = (ind[j][i] + 1e-12) / total;
-      e -= p * log(p);
-    }
-    e = e / log(n);
-
-    // step 3: the information part
-    info[j] = 1 - e;
-    if (info[j] < 0) info[j] = 0;
-    infoSum += info[j];
-  }
-
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    if (infoSum < 1e-9) {
-      entropyWeights[j] = 1.0 / NUM_INDICATORS;   // nothing changes: equal weights
-    } else {
-      entropyWeights[j] = info[j] / infoSum;
-    }
-
-    // combined weighting: when only one indicator changes, entropy alone
-    // gives it 100 % and the score becomes that one indicator.
-    // Mixing with equal weights keeps every indicator in the score.
-    weights[j] = ENTROPY_SHARE * entropyWeights[j]
-               + (1 - ENTROPY_SHARE) / NUM_INDICATORS;
-  }
-
-  // --- weighted score: weights x absolute indicator scores ---
-  float score = 0;
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    score += weights[j] * absScore[j];
-  }
-  healthScore = score * 100.0;
-}
-
-// =====================================================================
-// Stage 4: Fuzzy logic
-// =====================================================================
-
-// trapezoid membership: 0 before a, rises a->b, 1 from b to c, falls c->d
-float trap(float x, float a, float b, float c, float d) {
-  if (x < a || x > d) return 0;
-  if (x >= b && x <= c) return 1;
-  if (x < b) return (b == a) ? 1 : (x - a) / (b - a);
-  return (d == c) ? 1 : (d - x) / (d - c);
-}
-
-// triangle membership: peak at b
-float tri(float x, float a, float b, float c) {
-  return trap(x, a, b, b, c);
-}
-
-// output sets (health 0 - 100)
-float outFaulty(float y)   { return trap(y, 0, 0, 20, 40); }
-float outDegraded(float y) { return tri(y, 30, 50, 70); }
-float outHealthy(float y)  { return trap(y, 60, 80, 100, 100); }
-
-#define NUM_RULES 7
-const char* RULE_REASON[NUM_RULES] = {
-  "electrical fault (open or short circuit)",   // R1
-  "panel overheating",                          // R2
-  "very low output",                            // R3
-  "output lower than normal",                   // R4
-  "dust on the panel",                          // R5
-  "electrical output dropping",                 // R6
-  "all indicators good"                         // R7
-};
-
-float fuzzyHealth = NAN;
-String fuzzyStatus = "";
-String fuzzyReason = "";
-
-void runFuzzy() {
-  // ---- inputs ----
-  float S = healthScore;                       // 0 - 100
-  float E = min(absScore[1], absScore[2]);     // worst of voltage and current
-  float T = absScore[3];                       // 1 = cool, 0 = hot
-  float D = absScore[4];                       // 1 = clean, 0 = dirty
-
-  // ---- fuzzify ----
-  float sLow  = trap(S, 0, 0, 30, 50);
-  float sMed  = tri(S, 30, 55, 80);
-  float sHigh = trap(S, 65, 85, 100, 100);
-
-  float eBad  = trap(E, 0, 0, 0.3, 0.5);
-  float eOk   = tri(E, 0.3, 0.6, 0.85);
-  float eGood = trap(E, 0.7, 0.9, 1, 1);
-
-  float tHot    = trap(T, 0, 0, 0.25, 0.5);    // 0.25 = temp rise of 15 C
-  float tNormal = trap(T, 0.25, 0.5, 1, 1);
-
-  float dDirty = trap(D, 0, 0, 0.4, 0.6);
-  float dClean = trap(D, 0.4, 0.6, 1, 1);
-
-  // ---- rules (AND = min) ----
-  float rule[NUM_RULES];
-  rule[0] = eBad;                                           // R1 -> FAULTY
-  rule[1] = tHot;                                           // R2 -> FAULTY
-  rule[2] = min(sLow, 1 - eGood);                           // R3 -> FAULTY (only if electrical is not good)
-  rule[3] = min(sMed, 1 - eBad);                            // R4 -> DEGRADED
-  rule[4] = min(dDirty, 1 - eBad);                          // R5 -> DEGRADED (dust, no electrical fault)
-  rule[5] = eOk;                                            // R6 -> DEGRADED
-  rule[6] = min(min(sHigh, eGood), min(tNormal, dClean));   // R7 -> HEALTHY
-
-  // ---- combine rules of the same output (OR = max) ----
-  float faulty   = max(max(rule[0], rule[1]), rule[2]);
-  float degraded = max(max(rule[3], rule[4]), rule[5]);
-  float healthy  = rule[6];
-
-  // ---- defuzzify (centroid) ----
-  float sum = 0;
-  float weightedSum = 0;
-  for (int y = 0; y <= 100; y++) {
-    float mu = max(max(min(faulty, outFaulty(y)),
-                       min(degraded, outDegraded(y))),
-                   min(healthy, outHealthy(y)));
-    sum += mu;
-    weightedSum += mu * y;
-  }
-
-  if (sum < 1e-6) {
-    fuzzyHealth = S;     // no rule fired: use the weighted score
-  } else {
-    fuzzyHealth = weightedSum / sum;
-  }
-
-  if (fuzzyHealth >= 70) fuzzyStatus = "HEALTHY";
-  else if (fuzzyHealth >= 40) fuzzyStatus = "DEGRADED";
-  else fuzzyStatus = "FAULTY";
-
-  // reason = the rule that fired the most
-  int best = 0;
-  for (int i = 1; i < NUM_RULES; i++) {
-    if (rule[i] > rule[best]) best = i;
-  }
-  fuzzyReason = String("R") + (best + 1) + " " + RULE_REASON[best];
-}
-
-// =====================================================================
-// Dust sensor
-// =====================================================================
-
+// dust: add up how long the pin stays LOW
 volatile unsigned long lowStart = 0;
 volatile unsigned long lowTotal = 0;
 unsigned long dustWindowStart = 0;
-float dustPercent = -1;   // -1 means "not ready yet"
+float dustPercent = -1;   // -1 = not ready yet
+
+unsigned long lastRead = 0;
+bool relayOn = false;
 
 void IRAM_ATTR dustChanged() {
   if (digitalRead(DUST_PIN) == LOW) {
@@ -494,214 +41,36 @@ void IRAM_ATTR dustChanged() {
   }
 }
 
-// =====================================================================
-// Stage 5: WiFi, time and backend upload
-// =====================================================================
-
-unsigned long lastWifiTry = 0;
-int sentOk = 0;
-int sentFail = 0;
-
-void connectWiFi() {
-  Serial.print("Connecting to WiFi ");
-  Serial.print(WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  // wait max 15 s, then go on without WiFi (sensors still work)
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi connected, ESP32 IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi not connected - will try again every 30 s");
-  }
-  lastWifiTry = millis();
-}
-
-// get UTC time from the internet (the backend needs real UTC time)
-void startTime() {
-  configTime(0, 0, "pool.ntp.org", "time.google.com");   // 0 = UTC, no daylight saving
-}
-
-bool getUtcTime(struct tm &t) {
-  if (!getLocalTime(&t, 100)) return false;
-  return t.tm_year + 1900 >= 2024;   // still 1970 = not synced yet
-}
-
-// add one number field, but leave it out if it is missing (data contract)
-void addNumber(String &json, const char* name, float value, int decimals) {
-  if (isnan(value) || isinf(value)) return;
-  json += ",\"";
-  json += name;
-  json += "\":";
-  json += String(value, decimals);
-}
-
-void addText(String &json, const char* name, String value) {
-  json += ",\"";
-  json += name;
-  json += "\":\"";
-  json += value;
-  json += "\"";
-}
-
-void sendToBackend(float voltageKf, float currentKf, float powerKf,
-                   float surfaceKf, float ambientKf, float lux, bool graded) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("   Backend: no WiFi, not sent");
-    sentFail++;
-    return;
-  }
-
-  struct tm t;
-  if (!getUtcTime(t)) {
-    Serial.println("   Backend: waiting for internet time, not sent");
-    return;
-  }
-
-  char timestamp[25];
-  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &t);
-  time_t now;
-  time(&now);   // seconds since 1970 (UTC), used for a unique record_id
-
-  // build the JSON record (same field names as backend_writer.py)
-  String json = "{";
-  json += "\"timestamp_utc\":\"" + String(timestamp) + "\"";
-  addText(json, "site_id", SITE_ID);
-  addText(json, "device_id", DEVICE_ID);
-  addText(json, "panel_id", PANEL_ID);
-  addText(json, "record_id", String("LIVE-A01-") + String((unsigned long)now));
-
-  addNumber(json, "voltage_v", voltageKf, 4);
-  addNumber(json, "current_ma", currentKf, 4);
-  addNumber(json, "power_mw", powerKf, 4);
-  addNumber(json, "panel_temp1_c", surfaceKf, 4);
-  addNumber(json, "ambient_temp_c", ambientKf, 4);
-  addNumber(json, "irradiance_lux", lux, 1);
-  if (dustPercent >= 0) addNumber(json, "dust_lpo_pct", dustPercent, 4);
-  json += ",\"voltage_calculated\":";
-  json += USE_OHMS_LAW_VOLTAGE ? "true" : "false";
-
-  if (graded) {
-    addNumber(json, "weighted_score", healthScore, 2);
-    addNumber(json, "health_score", fuzzyHealth, 2);
-    addText(json, "health_status", fuzzyStatus);
-    addText(json, "health_reason", fuzzyReason);
-  }
-  json += "}";
-
-  HTTPClient http;
-  http.begin(String(BACKEND_URL) + "/api/v1/ingest/health");
-  http.setTimeout(HTTP_TIMEOUT_MS);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-API-Key", BACKEND_API_KEY);
-
-  int code = http.POST(json);
-  String reply = http.getString();
-  http.end();
-
-  if (code == 200 && reply.indexOf("\"accepted\":1") >= 0) {
-    sentOk++;
-    Serial.print("   Backend: sent OK (");
-    Serial.print(sentOk);
-    Serial.println(" total)");
-  } else {
-    sentFail++;
-    Serial.print("   Backend: FAILED, code ");
-    Serial.print(code);
-    Serial.print(" | ");
-    Serial.println(reply);
-  }
-}
-
-// =====================================================================
-// Helpers
-// =====================================================================
-
-// DS18B20 sends -127 when the probe is not found, and 85 before the first read
-float cleanTemp(float t) {
-  if (t == DEVICE_DISCONNECTED_C || t == 85.0) return NAN;
-  return t;
-}
-
-void printPair(String name, float raw, float filtered, int decimals, String unit) {
-  Serial.print(name);
-  Serial.print(": ");
-  Serial.print(raw, decimals);
-  Serial.print(" -> ");
-  Serial.print(filtered, decimals);
-  Serial.print(unit);
-  Serial.print(" | ");
-}
-
-void printWeights(const char* label, float* w) {
-  Serial.print(label);
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    Serial.print(IND_NAMES[j]);
-    Serial.print(" ");
-    Serial.print(w[j], 3);
-    if (j < NUM_INDICATORS - 1) Serial.print(", ");
-  }
-  Serial.println();
-}
-
-int readingNumber = 0;
-bool calibrated = false;
-float lastTempRise = 0;
-unsigned long lastRead = 0;
-
-// =====================================================================
-// setup and loop
-// =====================================================================
-
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("PV sensor node - Member 1");
 
   // relay OFF at start (low trigger, so HIGH = OFF = panel connected)
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, HIGH);
 
   Wire.begin(SDA_PIN, SCL_PIN);
-
-  if (!ina219.begin()) {
-    Serial.println("ERROR: INA219 not found");
-  }
-  if (!ads.begin(0x48)) {
-    Serial.println("ERROR: ADS1115 not found");
-  }
-  ads.setGain(GAIN_ONE);   // range +/- 4.096 V
+  if (!ina219.begin()) Serial.println("ERROR: INA219 not found");
+  if (!ads.begin(0x48)) Serial.println("ERROR: ADS1115 not found");
+  ads.setGain(GAIN_ONE);   // +/- 4.096 V
 
   probes.begin();
-  probes.requestTemperatures();   // first read is often -127, so do one now
-  Serial.print("DS18B20 probes found: ");
-  Serial.println(probes.getDeviceCount());
+  probes.setWaitForConversion(false);   // do not block the loop
+  probes.requestTemperatures();
 
   pinMode(DUST_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(DUST_PIN), dustChanged, CHANGE);
   dustWindowStart = millis();
 
-  connectWiFi();
-  startTime();
-  Serial.print("Backend: ");
-  Serial.println(BACKEND_URL);
-
-  if (USE_OHMS_LAW_VOLTAGE) {
-    Serial.println("NOTE: voltage is calculated as I x 120 ohm (GND wire not added yet)");
-  }
-  Serial.println("Dust sensor warming up for 60 s");
-  Serial.println("Type 1 = relay ON (panel cut), 0 = relay OFF");
-  Serial.print("Calibrating Kalman filter for ");
-  Serial.print(CALIBRATION_READINGS * READ_EVERY_MS / 1000);
-  Serial.println(" s - keep the panel still");
+  Serial.println();
+  Serial.println("=============================================");
+  Serial.println("  PV sensor node - Member 1 (live readings)");
+  Serial.println("=============================================");
+  Serial.print("  DS18B20 probes found: ");
+  Serial.println(probes.getDeviceCount());
+  Serial.println("  Voltage = current x 120 ohm (GND wire not added yet)");
+  Serial.println("  Type 1 = relay ON (panel cut), 0 = relay OFF");
+  Serial.println("  Dust needs about 90 s to start");
   Serial.println();
 }
 
@@ -711,29 +80,21 @@ void loop() {
     char c = Serial.read();
     if (c == '1') {
       digitalWrite(RELAY_PIN, LOW);
+      relayOn = true;
       Serial.println(">> Relay ON - panel cut");
     } else if (c == '0') {
       digitalWrite(RELAY_PIN, HIGH);
+      relayOn = false;
       Serial.println(">> Relay OFF - panel connected");
     }
   }
 
-  // WiFi lost? start a fresh connection every 30 s
-  if (WiFi.status() != WL_CONNECTED && millis() - lastWifiTry >= WIFI_RETRY_MS) {
-    Serial.println("WiFi lost - reconnecting");
-    WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    lastWifiTry = millis();
-  }
-
-  // dust: every 30 s, work out the low pulse percentage
+  // dust: every 30 s (windows that start in the warm-up are not used)
   if (millis() - dustWindowStart >= DUST_WINDOW_MS) {
     noInterrupts();
     unsigned long low = lowTotal;
     lowTotal = 0;
     interrupts();
-
-    // a window that started during the warm-up is not used
     if (dustWindowStart >= DUST_WARMUP_MS) {
       dustPercent = (low / 1000.0) / DUST_WINDOW_MS * 100.0;
     }
@@ -742,133 +103,31 @@ void loop() {
 
   if (millis() - lastRead < READ_EVERY_MS) return;
   lastRead = millis();
-  readingNumber++;
 
-  // ---- Stage 1: read the raw sensors ----
+  // INA219: current is measured, voltage is calculated
   float current = ina219.getCurrent_mA();
-  float shuntV = ina219.getShuntVoltage_mV() / 1000.0;
-  float voltage;
+  float voltage = current / 1000.0 * LOAD_OHMS + ina219.getShuntVoltage_mV() / 1000.0;
+  float power = voltage * current;
 
-  if (USE_OHMS_LAW_VOLTAGE) {
-    // V = I x R on the load, plus the small drop on the 0.1 ohm shunt
-    voltage = (current / 1000.0) * LOAD_OHMS + shuntV;
-  } else {
-    // measured directly: bus voltage (VIN- to GND) + shunt voltage
-    voltage = ina219.getBusVoltage_V() + shuntV;
-  }
-
+  // TEMT6000 through ADS1115 A0
   float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
   float lux = lightV * 200.0;   // rough value with the 10k resistor on the board
 
+  // DS18B20: read the last result, then start the next one
+  float surface = probes.getTempC(PANEL_PROBE);
+  float ambient = probes.getTempC(AIR_PROBE);
   probes.requestTemperatures();
-  float surface = cleanTemp(probes.getTempC(PANEL_PROBE));
-  float ambient = cleanTemp(probes.getTempC(AIR_PROBE));
 
-  // ---- Kalman calibration: first 20 readings ----
-  if (!calibrated) {
-    addJump(kfVoltage, voltage);
-    addJump(kfCurrent, current);
-    addJump(kfSurface, surface);
-    addJump(kfAmbient, ambient);
-
-    Serial.print("Calibrating ");
-    Serial.print(readingNumber);
-    Serial.print("/");
-    Serial.print(CALIBRATION_READINGS);
-    Serial.print(" | V: ");  Serial.print(voltage, 3);
-    Serial.print(" V | I: "); Serial.print(current, 2);
-    Serial.println(" mA");
-
-    if (readingNumber >= CALIBRATION_READINGS) {
-      finishCalibration(kfVoltage);
-      finishCalibration(kfCurrent);
-      finishCalibration(kfSurface);
-      finishCalibration(kfAmbient);
-      calibrated = true;
-
-      Serial.println();
-      Serial.println("Noise R found from my device (MAD):");
-      Serial.print("  voltage R = "); Serial.println(kfVoltage.r, 8);
-      Serial.print("  current R = "); Serial.println(kfCurrent.r, 6);
-      Serial.print("  surface R = "); Serial.println(kfSurface.r, 6);
-      Serial.print("  ambient R = "); Serial.println(kfAmbient.r, 6);
-      Serial.println();
-    }
-    return;
-  }
-
-  // ---- Stage 2: Kalman filter ----
-  float voltageKf = kalmanUpdate(kfVoltage, voltage);
-  float currentKf = kalmanUpdate(kfCurrent, current);
-  float surfaceKf = kalmanUpdate(kfSurface, surface);
-  float ambientKf = kalmanUpdate(kfAmbient, ambient);
-  float powerKf = voltageKf * currentKf;   // same as my pipeline
-
-  printPair(USE_OHMS_LAW_VOLTAGE ? "V(calc)" : "V", voltage, voltageKf, 3, " V");
-  printPair("I", current, currentKf, 2, " mA");
-  Serial.print("P: ");        Serial.print(powerKf, 4);
+  Serial.print("V(calc): ");   Serial.print(voltage, 2);
+  Serial.print(" V | I: ");    Serial.print(current, 1);
+  Serial.print(" mA | P: ");   Serial.print(power, 1);
   Serial.print(" mW | Light: "); Serial.print(lux, 0);
-  Serial.print(" lux | ");
-  printPair("Surface", surface, surfaceKf, 2, " C");
-  printPair("Ambient", ambient, ambientKf, 2, " C");
-  Serial.print("Dust: ");
-  if (dustPercent < 0) {
-    Serial.println("warming up");
-  } else {
-    Serial.print(dustPercent, 2);
-    Serial.println(" %");
-  }
-
-  // ---- Stage 3: entropy weighting ----
-  float tempRise = surfaceKf - ambientKf;
-  if (isnan(tempRise)) tempRise = lastTempRise;   // keep the last good value
-  lastTempRise = tempRise;
-
-  float dust = (dustPercent < 0) ? 0 : dustPercent;
-
-  addToWindow(powerKf, voltageKf, currentKf, lux, tempRise, dust);
-
-  bool graded = false;
-
-  if (bufCount < MIN_READINGS) {
-    Serial.print("   Entropy: collecting readings ");
-    Serial.print(bufCount);
-    Serial.print("/");
-    Serial.println(MIN_READINGS);
-  } else {
-    runEntropy();
-
-    printWeights("   Entropy weights: ", entropyWeights);
-    printWeights("   Used weights:    ", weights);
-
-    Serial.print("   Indicators (1 = good): ");
-    for (int j = 0; j < NUM_INDICATORS; j++) {
-      Serial.print(IND_NAMES[j]);
-      Serial.print(" ");
-      Serial.print(absScore[j], 2);
-      if (j < NUM_INDICATORS - 1) Serial.print(", ");
-    }
-    Serial.print(" | Weighted score: ");
-    Serial.print(healthScore, 1);
-    Serial.println(" / 100");
-
-    // ---- Stage 4: fuzzy logic ----
-    if (lux < MIN_GRADING_LUX) {
-      Serial.println("   Fuzzy: not enough light to grade the panel");
-    } else {
-      runFuzzy();
-      graded = true;
-
-      Serial.print("   >> HEALTH: ");
-      Serial.print(fuzzyHealth, 1);
-      Serial.print(" / 100 -> ");
-      Serial.print(fuzzyStatus);
-      Serial.print(" | Reason: ");
-      Serial.println(fuzzyReason);
-    }
-  }
-
-  // ---- Stage 5: send to the backend ----
-  sendToBackend(voltageKf, currentKf, powerKf, surfaceKf, ambientKf, lux, graded);
-  Serial.println();
+  Serial.print(" lux | Surface: ");
+  if (surface == DEVICE_DISCONNECTED_C) Serial.print("--"); else Serial.print(surface, 2);
+  Serial.print(" C | Ambient: ");
+  if (ambient == DEVICE_DISCONNECTED_C) Serial.print("--"); else Serial.print(ambient, 2);
+  Serial.print(" C | Dust: ");
+  if (dustPercent < 0) Serial.print("warming up"); else { Serial.print(dustPercent, 2); Serial.print(" %"); }
+  Serial.print(" | Relay: ");
+  Serial.println(relayOn ? "ON" : "OFF");
 }
