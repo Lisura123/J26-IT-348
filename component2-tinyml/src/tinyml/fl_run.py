@@ -74,6 +74,22 @@ def check_data(data, sites):
     return data
 
 
+def run_engine(init_weights, data, seed=0, engine=None, **engine_kwargs):
+    """Member 3's run_fl from the given starting weights with the fixed
+    integration settings (tanh, save=False). Returns the engine DataFrame."""
+    fixed = sorted(set(engine_kwargs) & set(FIXED_ARGS))
+    if fixed:
+        raise ValueError(f"{fixed} are fixed by the wrapper (tanh, Member 2 data and weights, save=False)")
+    base_sha = weights_sha256(init_weights)
+    engine = engine or member3_engine()
+    check_data(data, engine.pv_data.SITES)
+    engine_kwargs.setdefault("verbose", False)
+    df = engine.run_fl(seed=seed, activation="tanh", data=data, init_weights=init_weights, save=False, **engine_kwargs)
+    if weights_sha256(init_weights) != base_sha:
+        raise AssertionError("starting weights changed during the FL run")
+    return df
+
+
 def run_from_model_v1(dataset_path=None, data=None, seed=0, engine=None, models_dir=fd.MODELS_DIR, **engine_kwargs):
     """Start Member 3's FL from Model v1. Returns {candidate, history, updates}.
     Give dataset_path (TRAINING rows are taken by fl_data) or ready data."""
@@ -81,18 +97,12 @@ def run_from_model_v1(dataset_path=None, data=None, seed=0, engine=None, models_
     if fixed:
         raise ValueError(f"{fixed} are fixed by the wrapper (tanh, Member 2 data and weights, save=False)")
     contract, _, w_v1 = fd.load_frozen_model(models_dir)
-    base_sha = weights_sha256(w_v1)
     source = "caller-supplied (OPERATION exclusion not checked here)"
     if data is None:
         if dataset_path is None:
             raise ValueError("give dataset_path or data")
         data, source = fd.member3_get_data(dataset_path, models_dir), "fl_data.member3_get_data (TRAINING only)"
-    engine = engine or member3_engine()
-    check_data(data, engine.pv_data.SITES)
-    engine_kwargs.setdefault("verbose", False)
-    df = engine.run_fl(seed=seed, activation="tanh", data=data, init_weights=w_v1, save=False, **engine_kwargs)
-    if weights_sha256(w_v1) != base_sha:
-        raise AssertionError("Model v1 weights changed during the FL run")
+    df = run_engine(w_v1, data, seed, engine, **engine_kwargs)
     models = df.attrs["models"]
     last = max(models, key=lambda v: int(v.split(".")[1]))
     candidate = make_candidate(contract, models[last], last, seed, dict(engine_kwargs, save=False), source)

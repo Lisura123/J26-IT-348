@@ -19,3 +19,6 @@ dependencies.lock
 
 # integration-generated FL global models and candidates (never committed)
 fl_candidates/
+
+# development-model runs of docs/FL_EVALUATION_PROTOCOL.md (never committed)
+fl_dev_runs/
