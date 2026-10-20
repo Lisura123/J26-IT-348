@@ -53,8 +53,6 @@ KALMAN_SETTINGS = {
     "panel_temp1_c": 0.1,
     "panel_temp2_c": 0.1,
     "ambient_temp_c": 0.1,
-    "humidity_pct": 0.1,
-    "pressure_hpa": 0.1,
 }
 
 
@@ -62,7 +60,7 @@ def run_kalman_stage(df):
     df = df.copy()
     for col, ratio in KALMAN_SETTINGS.items():
         if col not in df.columns:
-            continue   # this sensor is not on the device (e.g. humidity)
+            continue   
         r = estimate_noise(df, col)
         df[col] = apply_kalman(df, col, ratio * r, r)
 

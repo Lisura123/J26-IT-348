@@ -12,12 +12,14 @@ API_KEY = os.environ.get("BACKEND_API_KEY", "")
 
 BATCH_SIZE = 500   # backend accepts max 5000 records and 5 MB per request
 
-# columns we send to the backend (and their type)
+
 NUMBER_COLUMNS = [
     "voltage_v", "current_ma", "power_mw",
     "panel_temp1_c", "panel_temp2_c", "ambient_temp_c",
-    "humidity_pct", "pressure_hpa", "irradiance_lux", "dust_vo_v",
-    "health_score",           # added after the fuzzy stage
+    "irradiance_lux",
+    "dust_vo_v",              
+    "dust_lpo_pct",           
+    "health_score",           
 ]
 TEXT_COLUMNS = ["record_id", "site_id", "device_id", "panel_id",
                 "quality_flag", "health_status"]

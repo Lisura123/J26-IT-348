@@ -29,7 +29,7 @@ def make_indicators(df):
     panel_cols = [c for c in ["panel_temp1_c", "panel_temp2_c"] if c in df.columns]
     panel_temp = df[panel_cols].mean(axis=1)
     df["temp_rise"] = panel_temp - df["ambient_temp_c"]
-    df["dust_level"] = df["dust_vo_v"]
+    df["dust_level"] = df["dust_lpo_pct"] if "dust_lpo_pct" in df.columns else df["dust_vo_v"]
     return df
 
 

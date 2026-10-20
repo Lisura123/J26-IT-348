@@ -65,14 +65,17 @@ def add_session_id(df):
 
 
 def fix_current(df):
-    # Use the session median to detect reversed current: flip reversed sessions, but set small negative noise to 0.
     session_median = df.groupby("session_id")["current_ma"].transform("median")
     reversed_wire = session_median < 0
 
     df = add_flag(df, reversed_wire, "CURRENT_SIGN_REVERSED")
     df.loc[reversed_wire, "current_ma"] = -df.loc[reversed_wire, "current_ma"]
 
-    # after flipping, any small negative left is just noise
+    
+    if "voltage_calculated" in df.columns:
+        df.loc[reversed_wire, "voltage_v"] = -df.loc[reversed_wire, "voltage_v"]
+        df.loc[df["voltage_v"] < 0, "voltage_v"] = 0.0
+
     df.loc[df["current_ma"] < 0, "current_ma"] = 0.0
     return df
 
@@ -96,10 +99,17 @@ def fix_spikes(df):
     return df
 
 
-def fix_humidity(df):
-    # our real device has no humidity sensor, so skip if the column is not there
-    if "humidity_pct" in df.columns:
-        df["humidity_pct"] = df["humidity_pct"].clip(upper=100)
+V_PANEL_MAX = 6.5        # V, a bit above Voc
+SHORT_PATH_OHMS = 0.6    # shunt 0.1 + wires and relay 0.5
+
+
+def fix_load_short(df):
+    if "voltage_calculated" not in df.columns:
+        return df   # voltage is measured, nothing to fix
+
+    shorted = df["voltage_v"] > V_PANEL_MAX
+    df = add_flag(df, shorted, "LOAD_SHORTED")
+    df.loc[shorted, "voltage_v"] = df.loc[shorted, "current_ma"] / 1000 * SHORT_PATH_OHMS
     return df
 
 
@@ -113,6 +123,6 @@ def run_quality_checks(raw):
     df = add_session_id(df)
     df = fix_current(df)
     df = fix_spikes(df)
-    df = fix_humidity(df)
+    df = fix_load_short(df)     
 
     return df
