@@ -12,6 +12,7 @@
 
 #define READ_EVERY_MS 5000    // same as the dataset (one reading every 5 s)
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
+#define CALIBRATION_READINGS 20
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
@@ -22,13 +23,84 @@ DallasTemperature probes(&oneWire);
 DeviceAddress PANEL_PROBE = {0x28, 0x43, 0x8B, 0x6D, 0x00, 0x00, 0x00, 0x84};
 DeviceAddress AIR_PROBE   = {0x28, 0x3B, 0xFF, 0x70, 0x00, 0x00, 0x00, 0x6A};
 
-// dust: we add up how long the pin stays LOW
+// ---------- Kalman filter ----------
+
+struct Kalman {
+  float qRatio;    // Q = qRatio x R
+  float q;
+  float r;
+  float x;         // best guess of the real value
+  float p;         // how unsure we are about x
+  bool started;
+
+  // for estimating R from the first readings
+  float lastReading;
+  bool hasLast;
+  int jumpCount;
+  double jumpSum;
+  double jumpSumSq;
+};
+
+Kalman kfVoltage = {0.3};
+Kalman kfCurrent = {0.3};
+Kalman kfSurface = {0.1};
+Kalman kfAmbient = {0.1};
+
+// save the jump between this reading and the last one
+void addJump(Kalman &k, float z) {
+  if (isnan(z)) return;
+  if (k.hasLast) {
+    double jump = z - k.lastReading;
+    k.jumpSum += jump;
+    k.jumpSumSq += jump * jump;
+    k.jumpCount++;
+  }
+  k.lastReading = z;
+  k.hasLast = true;
+}
+
+// same as estimate_noise() in Python: R = (std of jumps / sqrt(2))^2
+void finishCalibration(Kalman &k) {
+  float r = 0;
+  if (k.jumpCount > 1) {
+    double n = k.jumpCount;
+    double variance = (k.jumpSumSq - k.jumpSum * k.jumpSum / n) / (n - 1);
+    r = variance / 2.0;
+  }
+  if (r < 1e-6) r = 1e-6;   // never 0, or p / (p + r) becomes 0 / 0
+  k.r = r;
+  k.q = k.qRatio * r;
+}
+
+// same as kalman_1d() in Python, one reading at a time
+float kalmanUpdate(Kalman &k, float z) {
+  if (!k.started) {
+    if (isnan(z)) return NAN;
+    k.x = z;
+    k.p = k.r;
+    k.started = true;
+    return k.x;
+  }
+
+  k.p = k.p + k.q;              // predict: we get a bit more unsure
+
+  if (!isnan(z)) {              // update only if the reading is good
+    float gain = k.p / (k.p + k.r);
+    k.x = k.x + gain * (z - k.x);
+    k.p = (1 - gain) * k.p;
+  }
+  return k.x;
+}
+
+int readingNumber = 0;
+bool calibrated = false;
+
+// ---------- dust ----------
+
 volatile unsigned long lowStart = 0;
 volatile unsigned long lowTotal = 0;
 unsigned long dustWindowStart = 0;
 float dustPercent = -1;   // -1 means "not ready yet" (first 30 s)
-
-unsigned long lastRead = 0;
 
 void IRAM_ATTR dustChanged() {
   if (digitalRead(DUST_PIN) == LOW) {
@@ -37,6 +109,26 @@ void IRAM_ATTR dustChanged() {
     lowTotal += micros() - lowStart;
   }
 }
+
+// ---------- helpers ----------
+
+// DS18B20 sends -127 when the probe is not found, and 85 before the first read
+float cleanTemp(float t) {
+  if (t == DEVICE_DISCONNECTED_C || t == 85.0) return NAN;
+  return t;
+}
+
+void printPair(String name, float raw, float filtered, int decimals, String unit) {
+  Serial.print(name);
+  Serial.print(": ");
+  Serial.print(raw, decimals);
+  Serial.print(" -> ");
+  Serial.print(filtered, decimals);
+  Serial.print(unit);
+  Serial.print(" | ");
+}
+
+unsigned long lastRead = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -67,6 +159,9 @@ void setup() {
   dustWindowStart = millis();
 
   Serial.println("Type 1 = relay ON (panel cut), 0 = relay OFF");
+  Serial.print("Calibrating Kalman filter for ");
+  Serial.print(CALIBRATION_READINGS * READ_EVERY_MS / 1000);
+  Serial.println(" s - keep the panel still");
   Serial.println();
 }
 
@@ -93,41 +188,77 @@ void loop() {
     dustWindowStart = millis();
   }
 
-  // read all the other sensors every 5 s
-  if (millis() - lastRead >= READ_EVERY_MS) {
-    lastRead = millis();
+  if (millis() - lastRead < READ_EVERY_MS) return;
+  lastRead = millis();
+  readingNumber++;
 
-    // INA219: panel voltage and current
-    float busV = ina219.getBusVoltage_V();
-    float shuntMv = ina219.getShuntVoltage_mV();
-    float voltage = busV + shuntMv / 1000.0;
-    float current = ina219.getCurrent_mA();
+  // ---- read the sensors ----
+  float voltage = ina219.getBusVoltage_V() + ina219.getShuntVoltage_mV() / 1000.0;
+  float current = ina219.getCurrent_mA();
 
-    // power = V x I (same as my pipeline: power_mw = voltage_v * current_ma)
-    // the INA219 power register steps in about 2 mW, so small values show as 0
-    float power = voltage * current;
+  float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
+  float lux = lightV * 200.0;   // rough value with the 10k resistor on the board
 
-    // TEMT6000 through ADS1115 A0
-    float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
-    float lux = lightV * 200.0;   // rough value with the 10k resistor on the board
+  probes.requestTemperatures();
+  float surface = cleanTemp(probes.getTempC(PANEL_PROBE));
+  float ambient = cleanTemp(probes.getTempC(AIR_PROBE));
 
-    // DS18B20: -127 means probe disconnected (my pipeline handles this)
-    probes.requestTemperatures();
-    float panelTemp = probes.getTempC(PANEL_PROBE);
-    float airTemp = probes.getTempC(AIR_PROBE);
+  // ---- calibration: first 20 readings ----
+  if (!calibrated) {
+    addJump(kfVoltage, voltage);
+    addJump(kfCurrent, current);
+    addJump(kfSurface, surface);
+    addJump(kfAmbient, ambient);
 
-    Serial.print("V: ");        Serial.print(voltage, 3);
-    Serial.print(" V | I: ");   Serial.print(current, 2);
-    Serial.print(" mA | P: ");  Serial.print(power, 4);
-    Serial.print(" mW | Light: "); Serial.print(lux, 0);
-    Serial.print(" lux | Surface: "); Serial.print(panelTemp, 2);
-    Serial.print(" C | Ambient: ");   Serial.print(airTemp, 2);
-    Serial.print(" C | Dust: ");
-    if (dustPercent < 0) {
-      Serial.println("wait 30 s");
-    } else {
-      Serial.print(dustPercent, 2);
-      Serial.println(" %");
+    Serial.print("Calibrating ");
+    Serial.print(readingNumber);
+    Serial.print("/");
+    Serial.print(CALIBRATION_READINGS);
+    Serial.print(" | V: ");  Serial.print(voltage, 3);
+    Serial.print(" V | I: "); Serial.print(current, 2);
+    Serial.println(" mA");
+
+    if (readingNumber >= CALIBRATION_READINGS) {
+      finishCalibration(kfVoltage);
+      finishCalibration(kfCurrent);
+      finishCalibration(kfSurface);
+      finishCalibration(kfAmbient);
+      calibrated = true;
+
+      Serial.println();
+      Serial.println("Noise R found from my device:");
+      Serial.print("  voltage R = "); Serial.println(kfVoltage.r, 8);
+      Serial.print("  current R = "); Serial.println(kfCurrent.r, 6);
+      Serial.print("  surface R = "); Serial.println(kfSurface.r, 6);
+      Serial.print("  ambient R = "); Serial.println(kfAmbient.r, 6);
+      Serial.println();
+      Serial.println("Format: raw -> filtered");
+      Serial.println();
     }
+    return;
+  }
+
+  // ---- Kalman filter ----
+  float voltageKf = kalmanUpdate(kfVoltage, voltage);
+  float currentKf = kalmanUpdate(kfCurrent, current);
+  float surfaceKf = kalmanUpdate(kfSurface, surface);
+  float ambientKf = kalmanUpdate(kfAmbient, ambient);
+
+  // power from the filtered values (same as my pipeline)
+  float powerKf = voltageKf * currentKf;
+
+  printPair("V", voltage, voltageKf, 3, " V");
+  printPair("I", current, currentKf, 2, " mA");
+  Serial.print("P: ");        Serial.print(powerKf, 4);
+  Serial.print(" mW | Light: "); Serial.print(lux, 0);
+  Serial.print(" lux | ");
+  printPair("Surface", surface, surfaceKf, 2, " C");
+  printPair("Ambient", ambient, ambientKf, 2, " C");
+  Serial.print("Dust: ");
+  if (dustPercent < 0) {
+    Serial.println("wait");
+  } else {
+    Serial.print(dustPercent, 2);
+    Serial.println(" %");
   }
 }
