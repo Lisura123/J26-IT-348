@@ -531,6 +531,109 @@ def test_dataset_validation_failure_stops_before_anything_is_written(tmp_path):
     assert not out.exists()
 
 
+# ---------------------------------------------------------------- hand-calculated values (no training)
+
+def test_drift_and_label_change_rate_values():
+    rng = np.random.default_rng(0)
+    m0 = {"W1": rng.normal(0, .5, (8, 16)), "b1": rng.normal(0, .1, 16), "W2": rng.normal(0, .5, (16, 5)),
+          "b2": rng.normal(0, .1, 5)}
+    d = {k: rng.normal(0, .3, v.shape) for k, v in m0.items()}
+    w1 = {k: m0[k] + d[k] for k in m0}
+    X = rng.normal(0, 1, (200, 8))
+    hist = pd.DataFrame([{"round_id": r, "global_model_version": f"v1.{r}", "global_val_loss": .1,
+                          "clients_received": 6, "clients_late": 0, "clients_failed": 0, "mean_update_l2_norm": 0.0}
+                         for r in (0, 1)])
+    hist.attrs["models"] = {"v1.0": {k: v.tolist() for k, v in m0.items()},
+                            "v1.1": {k: v.tolist() for k, v in w1.items()}}
+    pr = fl_dev.per_round(hist, m0, X)
+    from tinyml.export import forward
+    assert pr[0]["drift_l2_from_m0"] == 0.0 and pr[0]["label_change_rate_vs_m0_on_pool"] == 0.0
+    assert pr[1]["drift_l2_from_m0"] == pytest.approx(np.sqrt(sum((d[k] ** 2).sum() for k in d)), abs=1e-12)
+    assert pr[1]["drift_l2_from_m0"] == pytest.approx(4.6587401233, abs=1e-9)
+    changed = (forward(w1, X)[1].argmax(1) != forward(m0, X)[1].argmax(1)).mean()
+    assert pr[1]["label_change_rate_vs_m0_on_pool"] == pytest.approx(changed) == pytest.approx(0.445)
+
+
+# Hand-made EVAL tables: 10 runs of 4 readings (2 per class), two seeds. GOOD reads every
+# reading correctly; BAD reads both OPEN runs as NORMAL and two SHORT readings as OPEN.
+Y = (["NORMAL"] * 4 + ["OPEN_CIRCUIT"] * 4 + ["SHORT_CIRCUIT"] * 4 + ["DUST"] * 4 + ["PARTIAL_SHADING"] * 4) * 2
+GOOD = list(Y)
+BAD = list(Y)
+BAD[4:8] = ["NORMAL"] * 4
+BAD[8:10] = ["OPEN_CIRCUIT"] * 2
+BAD[24:28] = ["NORMAL"] * 4
+HI, LO = [0.99] * len(Y), [0.80] * len(Y)
+SITE_FL = {"SITE-A": ["DUST", "NORMAL", "PARTIAL_SHADING"]}                 # SITE-A has no OPEN or SHORT data
+
+
+def _fake_result(seed, preds, conf):
+    from tinyml.evaluate import classification_metrics
+    m = {}
+    for n, p in preds.items():
+        cm = classification_metrics(np.array(Y), np.array(p))
+        c, c0 = np.array(conf[n]), np.array(conf["M0"])
+        m[n] = {"macro_f1": cm["macro_f1"], "accuracy": cm["accuracy"],
+                "open_circuit_recall": cm["safety_recall"]["OPEN_CIRCUIT"],
+                "short_circuit_recall": cm["safety_recall"]["SHORT_CIRCUIT"],
+                "confidence_at_or_above_0_90": float((c >= .9).mean()),
+                "confidence_crossings_vs_m0": {"fell_below": int(((c0 >= .9) & (c < .9)).sum()),
+                                               "rose_above": int(((c0 < .9) & (c >= .9)).sum()),
+                                               "crossings": int(((c0 >= .9) != (c >= .9)).sum())}}
+    t = {"run_id": [f"r{i // 4}" for i in range(len(Y))], "site_id": ["SITE-A"] * len(Y), "y": Y, **preds,
+         **{f"conf:{n}": v for n, v in conf.items()}}
+    return {"fold": 0, "seed": seed, "metrics": m, "eval_table": t, "site_classes_fl": SITE_FL,
+            "communication": {"payload_bytes_total": 100, "lora_airtime_s": 1.0, "radio_energy_mj": 2.0,
+                              "updates": {"RECEIVED": 6}}}
+
+
+def _case(fl, m0, local, conf_fl, conf_m0):
+    preds = {"M0": m0, "LOCAL-SITE-A": local, "FL": fl, "CENT": GOOD, "CENT-FT": GOOD}
+    conf = {"M0": conf_m0, "LOCAL-SITE-A": HI, "FL": conf_fl, "CENT": HI, "CENT-FT": HI}
+    return fl_dev.summarize([_fake_result(s, preds, conf) for s in (0, 1)], [], {}, planned=2)
+
+
+def test_open_and_short_missed_and_false_alarm_values():
+    s = _case(fl=GOOD, m0=BAD, local=BAD, conf_fl=HI, conf_m0=LO)
+    # per seed: OPEN 8 true, all 8 read NORMAL; 2 SHORT read OPEN (2 missed SHORT, 2 false OPEN alarms)
+    assert s["open_short_safety"]["OPEN_CIRCUIT"]["M0"] == {"true": 16, "detected": 0, "missed": 16, "false_alarms": 4}
+    assert s["open_short_safety"]["SHORT_CIRCUIT"]["M0"] == {"true": 16, "detected": 12, "missed": 4, "false_alarms": 0}
+    assert s["open_short_safety"]["OPEN_CIRCUIT"]["FL"] == {"true": 16, "detected": 16, "missed": 0, "false_alarms": 0}
+    assert s["open_short_safety"]["OPEN_CIRCUIT"]["FL_minus_M0_missed"] == -16
+    assert s["open_short_safety"]["OPEN_CIRCUIT"]["FL_minus_M0_false_alarms"] == -4
+
+
+def test_confidence_threshold_values():
+    s = _case(fl=GOOD, m0=BAD, local=BAD, conf_fl=HI, conf_m0=LO)
+    assert s["confidence_below_0_90"]["FL"] == 0.0 and s["confidence_below_0_90"]["M0"] == 1.0
+    assert s["models"]["FL"]["pooled"]["crossings_vs_m0"] == {"fell_below": 0, "rose_above": 80, "crossings": 80}
+
+
+def test_fl_versus_local_average_values():
+    from sklearn.metrics import f1_score
+    s = _case(fl=GOOD, m0=BAD, local=BAD, conf_fl=HI, conf_m0=LO)
+    expected = (f1_score(Y * 2, GOOD * 2, labels=list(LABELS), average="macro", zero_division=0)
+                - f1_score(Y * 2, BAD * 2, labels=list(LABELS), average="macro", zero_division=0))
+    assert s["comparisons"]["FL_vs_LOCAL_mean"]["observed_difference"] == pytest.approx(expected, abs=1e-12)
+    assert s["comparisons"]["FL_vs_LOCAL_mean"]["observed_difference"] == pytest.approx(0.295238095238, abs=1e-9)
+    assert s["classes_missing_at_site"]["SITE-A"] == {"readings": 32, "fl_correct": 32, "local_correct": 12}
+
+
+def test_evidence_criteria_positive_case():
+    s = _case(fl=GOOD, m0=BAD, local=BAD, conf_fl=HI, conf_m0=LO)            # FL clearly better everywhere
+    c = s["section8_criteria"]
+    assert all(c[k] is True for k in c if k != "note")
+    lo, hi = s["comparisons"]["FL_vs_M0"]["ci95"]
+    assert s["comparisons"]["FL_vs_M0"]["observed_difference"] == pytest.approx(0.2952380952, abs=1e-9) and 0 < lo < hi
+
+
+def test_evidence_criteria_negative_case():
+    s = _case(fl=BAD, m0=GOOD, local=GOOD, conf_fl=LO, conf_m0=HI)            # FL clearly worse everywhere
+    c = s["section8_criteria"]
+    assert all(c[k] is False for k in c if k != "note")
+    lo, hi = s["comparisons"]["FL_vs_M0"]["ci95"]
+    assert s["comparisons"]["FL_vs_M0"]["observed_difference"] == pytest.approx(-0.2952380952, abs=1e-9) and lo < hi < 0
+
+
 def test_official_files_unchanged_and_no_dev_runs_folder():
     from tinyml.export import verify_artifacts
     verify_artifacts(fd.MODELS_DIR)
