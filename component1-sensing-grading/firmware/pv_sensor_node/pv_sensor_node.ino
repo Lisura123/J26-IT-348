@@ -1,14 +1,23 @@
 #include <Wire.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <time.h>
 #include <Adafruit_INA219.h>
 #include <Adafruit_ADS1X15.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include "secrets.h"
 
 #define SDA_PIN 21
 #define SCL_PIN 22
 #define ONE_WIRE_PIN 4
 #define DUST_PIN 35
 #define RELAY_PIN 26
+
+// my device in the group data contract (reference/sites.csv)
+#define SITE_ID   "SITE-A"
+#define DEVICE_ID "ESP32-A01"
+#define PANEL_ID  "PV-A01"
 
 #define READ_EVERY_MS 5000    // same as the dataset (one reading every 5 s)
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
@@ -35,6 +44,9 @@
 // Set this to false when the GND wire (panel - to GND) is added.
 #define USE_OHMS_LAW_VOLTAGE true
 #define LOAD_OHMS 120.0
+
+#define WIFI_RETRY_MS 30000   // try to reconnect WiFi every 30 s
+#define HTTP_TIMEOUT_MS 3000
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
@@ -440,6 +452,133 @@ void IRAM_ATTR dustChanged() {
 }
 
 // =====================================================================
+// Stage 5: WiFi, time and backend upload
+// =====================================================================
+
+unsigned long lastWifiTry = 0;
+int sentOk = 0;
+int sentFail = 0;
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi ");
+  Serial.print(WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  // wait max 15 s, then go on without WiFi (sensors still work)
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi connected, ESP32 IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi not connected - will try again every 30 s");
+  }
+  lastWifiTry = millis();
+}
+
+// get UTC time from the internet (the backend needs real UTC time)
+void startTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");   // 0 = UTC, no daylight saving
+}
+
+bool getUtcTime(struct tm &t) {
+  if (!getLocalTime(&t, 100)) return false;
+  return t.tm_year + 1900 >= 2024;   // still 1970 = not synced yet
+}
+
+// add one number field, but leave it out if it is missing (data contract)
+void addNumber(String &json, const char* name, float value, int decimals) {
+  if (isnan(value) || isinf(value)) return;
+  json += ",\"";
+  json += name;
+  json += "\":";
+  json += String(value, decimals);
+}
+
+void addText(String &json, const char* name, String value) {
+  json += ",\"";
+  json += name;
+  json += "\":\"";
+  json += value;
+  json += "\"";
+}
+
+void sendToBackend(float voltageKf, float currentKf, float powerKf,
+                   float surfaceKf, float ambientKf, float lux, bool graded) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("   Backend: no WiFi, not sent");
+    sentFail++;
+    return;
+  }
+
+  struct tm t;
+  if (!getUtcTime(t)) {
+    Serial.println("   Backend: waiting for internet time, not sent");
+    return;
+  }
+
+  char timestamp[25];
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &t);
+  time_t now;
+  time(&now);   // seconds since 1970 (UTC), used for a unique record_id
+
+  // build the JSON record (same field names as backend_writer.py)
+  String json = "{";
+  json += "\"timestamp_utc\":\"" + String(timestamp) + "\"";
+  addText(json, "site_id", SITE_ID);
+  addText(json, "device_id", DEVICE_ID);
+  addText(json, "panel_id", PANEL_ID);
+  addText(json, "record_id", String("LIVE-A01-") + String((unsigned long)now));
+
+  addNumber(json, "voltage_v", voltageKf, 4);
+  addNumber(json, "current_ma", currentKf, 4);
+  addNumber(json, "power_mw", powerKf, 4);
+  addNumber(json, "panel_temp1_c", surfaceKf, 4);
+  addNumber(json, "ambient_temp_c", ambientKf, 4);
+  addNumber(json, "irradiance_lux", lux, 1);
+  if (dustPercent >= 0) addNumber(json, "dust_lpo_pct", dustPercent, 4);
+  json += ",\"voltage_calculated\":";
+  json += USE_OHMS_LAW_VOLTAGE ? "true" : "false";
+
+  if (graded) {
+    addNumber(json, "weighted_score", healthScore, 2);
+    addNumber(json, "health_score", fuzzyHealth, 2);
+    addText(json, "health_status", fuzzyStatus);
+    addText(json, "health_reason", fuzzyReason);
+  }
+  json += "}";
+
+  HTTPClient http;
+  http.begin(String(BACKEND_URL) + "/api/v1/ingest/health");
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", BACKEND_API_KEY);
+
+  int code = http.POST(json);
+  String reply = http.getString();
+  http.end();
+
+  if (code == 200 && reply.indexOf("\"accepted\":1") >= 0) {
+    sentOk++;
+    Serial.print("   Backend: sent OK (");
+    Serial.print(sentOk);
+    Serial.println(" total)");
+  } else {
+    sentFail++;
+    Serial.print("   Backend: FAILED, code ");
+    Serial.print(code);
+    Serial.print(" | ");
+    Serial.println(reply);
+  }
+}
+
+// =====================================================================
 // Helpers
 // =====================================================================
 
@@ -496,6 +635,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(DUST_PIN), dustChanged, CHANGE);
   dustWindowStart = millis();
 
+  connectWiFi();
+  startTime();
+  Serial.print("Backend: ");
+  Serial.println(BACKEND_URL);
+
   if (USE_OHMS_LAW_VOLTAGE) {
     Serial.println("NOTE: voltage is calculated as I x 120 ohm (GND wire not added yet)");
   }
@@ -517,6 +661,13 @@ void loop() {
       digitalWrite(RELAY_PIN, HIGH);
       Serial.println(">> Relay OFF - panel connected");
     }
+  }
+
+  // WiFi lost? try again every 30 s
+  if (WiFi.status() != WL_CONNECTED && millis() - lastWifiTry >= WIFI_RETRY_MS) {
+    Serial.println("WiFi lost - reconnecting");
+    WiFi.reconnect();
+    lastWifiTry = millis();
   }
 
   // dust: every 30 s, work out the low pulse percentage
@@ -617,51 +768,53 @@ void loop() {
 
   addToWindow(powerKf, voltageKf, currentKf, lux, tempRise, dust);
 
+  bool graded = false;
+
   if (bufCount < MIN_READINGS) {
     Serial.print("   Entropy: collecting readings ");
     Serial.print(bufCount);
     Serial.print("/");
     Serial.println(MIN_READINGS);
+  } else {
+    runEntropy();
+
+    Serial.print("   Weights: ");
+    for (int j = 0; j < NUM_INDICATORS; j++) {
+      Serial.print(IND_NAMES[j]);
+      Serial.print(" ");
+      Serial.print(weights[j], 3);
+      if (j < NUM_INDICATORS - 1) Serial.print(", ");
+    }
     Serial.println();
-    return;
+
+    Serial.print("   Indicators (1 = good): ");
+    for (int j = 0; j < NUM_INDICATORS; j++) {
+      Serial.print(IND_NAMES[j]);
+      Serial.print(" ");
+      Serial.print(absScore[j], 2);
+      if (j < NUM_INDICATORS - 1) Serial.print(", ");
+    }
+    Serial.print(" | Weighted score: ");
+    Serial.print(healthScore, 1);
+    Serial.println(" / 100");
+
+    // ---- Stage 4: fuzzy logic ----
+    if (lux < MIN_GRADING_LUX) {
+      Serial.println("   Fuzzy: not enough light to grade the panel");
+    } else {
+      runFuzzy();
+      graded = true;
+
+      Serial.print("   >> HEALTH: ");
+      Serial.print(fuzzyHealth, 1);
+      Serial.print(" / 100 -> ");
+      Serial.print(fuzzyStatus);
+      Serial.print(" | Reason: ");
+      Serial.println(fuzzyReason);
+    }
   }
 
-  runEntropy();
-
-  Serial.print("   Weights: ");
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    Serial.print(IND_NAMES[j]);
-    Serial.print(" ");
-    Serial.print(weights[j], 3);
-    if (j < NUM_INDICATORS - 1) Serial.print(", ");
-  }
-  Serial.println();
-
-  Serial.print("   Indicators (1 = good): ");
-  for (int j = 0; j < NUM_INDICATORS; j++) {
-    Serial.print(IND_NAMES[j]);
-    Serial.print(" ");
-    Serial.print(absScore[j], 2);
-    if (j < NUM_INDICATORS - 1) Serial.print(", ");
-  }
-  Serial.print(" | Weighted score: ");
-  Serial.print(healthScore, 1);
-  Serial.println(" / 100");
-
-  // ---- Stage 4: fuzzy logic ----
-  if (lux < MIN_GRADING_LUX) {
-    Serial.println("   Fuzzy: not enough light to grade the panel");
-    Serial.println();
-    return;
-  }
-
-  runFuzzy();
-
-  Serial.print("   >> HEALTH: ");
-  Serial.print(fuzzyHealth, 1);
-  Serial.print(" / 100 -> ");
-  Serial.print(fuzzyStatus);
-  Serial.print(" | Reason: ");
-  Serial.println(fuzzyReason);
+  // ---- Stage 5: send to the backend ----
+  sendToBackend(voltageKf, currentKf, powerKf, surfaceKf, ambientKf, lux, graded);
   Serial.println();
 }
