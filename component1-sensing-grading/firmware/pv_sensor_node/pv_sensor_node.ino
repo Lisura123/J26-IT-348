@@ -21,6 +21,7 @@
 
 #define READ_EVERY_MS 5000    // same as the dataset (one reading every 5 s)
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
+#define DUST_WARMUP_MS 60000  // DSM501B needs about 1 min to warm up after power on
 #define CALIBRATION_READINGS 20
 
 #define WINDOW_SIZE 30        // entropy uses the last 30 readings (2.5 min)
@@ -30,6 +31,10 @@
 // noise floor: a change must be bigger than 3 x noise to count as information
 #define NOISE_SIGMAS 3.0
 #define DUST_NOISE 1.0        // % (dust has no Kalman filter, so a fixed value)
+
+// combined weighting: part from entropy, the rest shared equally
+// 0.5 -> every indicator gets at least 0.5 / 5 = 10 %
+#define ENTROPY_SHARE 0.5
 
 // fixed ranges for the absolute score (first values, tune with real data)
 #define TEMP_RISE_BAD 20.0    // C  (0 C = good, 20 C or more = bad)
@@ -45,6 +50,11 @@
 #define USE_OHMS_LAW_VOLTAGE true
 #define LOAD_OHMS 120.0
 
+// smallest step each sensor can show (used for the smallest possible noise R)
+#define CURRENT_STEP 0.1      // mA  (INA219)
+#define VOLTAGE_STEP (USE_OHMS_LAW_VOLTAGE ? (CURRENT_STEP / 1000.0 * LOAD_OHMS) : 0.004)
+#define TEMP_STEP 0.0625      // C   (DS18B20, 12 bit)
+
 #define WIFI_RETRY_MS 30000   // try to reconnect WiFi every 30 s
 #define HTTP_TIMEOUT_MS 3000
 
@@ -58,11 +68,13 @@ DeviceAddress PANEL_PROBE = {0x28, 0x43, 0x8B, 0x6D, 0x00, 0x00, 0x00, 0x84};
 DeviceAddress AIR_PROBE   = {0x28, 0x3B, 0xFF, 0x70, 0x00, 0x00, 0x00, 0x6A};
 
 // =====================================================================
-// Stage 2: Kalman filter
+// Kalman filter data (must be above every function, because the
+// Arduino IDE puts the function list just before the first function)
 // =====================================================================
 
 struct Kalman {
   float qRatio;    // Q = qRatio x R
+  float rMin;      // smallest R (from the sensor step size)
   float q;
   float r;
   float x;         // best guess of the real value
@@ -73,37 +85,71 @@ struct Kalman {
   float lastReading;
   bool hasLast;
   int jumpCount;
-  double jumpSum;
-  double jumpSumSq;
+  float jumps[CALIBRATION_READINGS];
 };
 
-Kalman kfVoltage = {0.3};
-Kalman kfCurrent = {0.3};
-Kalman kfSurface = {0.1};
-Kalman kfAmbient = {0.1};
+// quantization noise of a sensor with step size s is s^2 / 12
+Kalman kfVoltage = {0.3, VOLTAGE_STEP * VOLTAGE_STEP / 12.0};
+Kalman kfCurrent = {0.3, CURRENT_STEP * CURRENT_STEP / 12.0};
+Kalman kfSurface = {0.1, TEMP_STEP * TEMP_STEP / 12.0};
+Kalman kfAmbient = {0.1, TEMP_STEP * TEMP_STEP / 12.0};
+
+// =====================================================================
+// Small helpers for sorting and median
+// =====================================================================
+
+// simple insertion sort (our arrays are small)
+void sortArray(float* a, int n) {
+  for (int i = 1; i < n; i++) {
+    float key = a[i];
+    int j = i - 1;
+    while (j >= 0 && a[j] > key) {
+      a[j + 1] = a[j];
+      j--;
+    }
+    a[j + 1] = key;
+  }
+}
+
+float medianOf(float* values, int n) {
+  float sorted[CALIBRATION_READINGS];
+  for (int i = 0; i < n; i++) sorted[i] = values[i];
+  sortArray(sorted, n);
+  if (n % 2 == 1) return sorted[n / 2];
+  return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+}
+
+// =====================================================================
+// Stage 2: Kalman filter
+// =====================================================================
 
 // save the jump between this reading and the last one
 void addJump(Kalman &k, float z) {
   if (isnan(z)) return;
-  if (k.hasLast) {
-    double jump = z - k.lastReading;
-    k.jumpSum += jump;
-    k.jumpSumSq += jump * jump;
+  if (k.hasLast && k.jumpCount < CALIBRATION_READINGS) {
+    k.jumps[k.jumpCount] = z - k.lastReading;
     k.jumpCount++;
   }
   k.lastReading = z;
   k.hasLast = true;
 }
 
-// same as estimate_noise() in Python: R = (std of jumps / sqrt(2))^2
+// Python uses R = (std of jumps / sqrt(2))^2.
+// On the real device the light changed during calibration, and the std
+// counted that trend as noise. So here we use MAD (median absolute
+// deviation), which ignores the few big jumps:
+//   noise std of jumps = 1.4826 x MAD,  R = (that / sqrt(2))^2
 void finishCalibration(Kalman &k) {
   float r = 0;
-  if (k.jumpCount > 1) {
-    double n = k.jumpCount;
-    double variance = (k.jumpSumSq - k.jumpSum * k.jumpSum / n) / (n - 1);
-    r = variance / 2.0;
+  if (k.jumpCount >= 3) {
+    float med = medianOf(k.jumps, k.jumpCount);
+    float dev[CALIBRATION_READINGS];
+    for (int i = 0; i < k.jumpCount; i++) dev[i] = fabs(k.jumps[i] - med);
+    float mad = medianOf(dev, k.jumpCount);
+    float jumpStd = 1.4826 * mad;
+    r = jumpStd * jumpStd / 2.0;
   }
-  if (r < 1e-6) r = 1e-6;   // never 0, or p / (p + r) becomes 0 / 0
+  if (r < k.rMin) r = k.rMin;   // never smaller than the sensor step noise
   k.r = r;
   k.q = k.qRatio * r;
 }
@@ -146,9 +192,10 @@ int bufNext = 0;    // where the next reading goes
 const char* IND_NAMES[NUM_INDICATORS] = {"power", "voltage", "current", "temp_rise", "dust"};
 const bool IND_BENEFIT[NUM_INDICATORS] = {true, true, true, false, false};
 
-float weights[NUM_INDICATORS];
-float absScore[NUM_INDICATORS];   // newest reading on the fixed scale (1 = good)
-float healthScore = NAN;          // entropy weighted score (0 - 100)
+float entropyWeights[NUM_INDICATORS];   // only from entropy
+float weights[NUM_INDICATORS];          // used: entropy + equal
+float absScore[NUM_INDICATORS];         // newest reading on the fixed scale (1 = good)
+float healthScore = NAN;                // weighted score (0 - 100)
 
 // best healthy reference seen since the ESP32 started
 float bestRefPower = 0;
@@ -172,17 +219,7 @@ void addToWindow(float power, float voltage, float current, float lux,
 float percentile95(float* values, int n) {
   float sorted[WINDOW_SIZE];
   for (int i = 0; i < n; i++) sorted[i] = values[i];
-
-  // simple insertion sort (n is small)
-  for (int i = 1; i < n; i++) {
-    float key = sorted[i];
-    int j = i - 1;
-    while (j >= 0 && sorted[j] > key) {
-      sorted[j + 1] = sorted[j];
-      j--;
-    }
-    sorted[j + 1] = key;
-  }
+  sortArray(sorted, n);
 
   float pos = 0.95 * (n - 1);
   int low = (int)pos;
@@ -317,13 +354,19 @@ void runEntropy() {
 
   for (int j = 0; j < NUM_INDICATORS; j++) {
     if (infoSum < 1e-9) {
-      weights[j] = 1.0 / NUM_INDICATORS;   // nothing changes: equal weights
+      entropyWeights[j] = 1.0 / NUM_INDICATORS;   // nothing changes: equal weights
     } else {
-      weights[j] = info[j] / infoSum;
+      entropyWeights[j] = info[j] / infoSum;
     }
+
+    // combined weighting: when only one indicator changes, entropy alone
+    // gives it 100 % and the score becomes that one indicator.
+    // Mixing with equal weights keeps every indicator in the score.
+    weights[j] = ENTROPY_SHARE * entropyWeights[j]
+               + (1 - ENTROPY_SHARE) / NUM_INDICATORS;
   }
 
-  // --- weighted score: adaptive weights x absolute indicator scores ---
+  // --- weighted score: weights x absolute indicator scores ---
   float score = 0;
   for (int j = 0; j < NUM_INDICATORS; j++) {
     score += weights[j] * absScore[j];
@@ -394,9 +437,9 @@ void runFuzzy() {
   float rule[NUM_RULES];
   rule[0] = eBad;                                           // R1 -> FAULTY
   rule[1] = tHot;                                           // R2 -> FAULTY
-  rule[2] = sLow;                                           // R3 -> FAULTY
+  rule[2] = min(sLow, 1 - eGood);                           // R3 -> FAULTY (only if electrical is not good)
   rule[3] = min(sMed, 1 - eBad);                            // R4 -> DEGRADED
-  rule[4] = min(dDirty, eGood);                             // R5 -> DEGRADED
+  rule[4] = min(dDirty, 1 - eBad);                          // R5 -> DEGRADED (dust, no electrical fault)
   rule[5] = eOk;                                            // R6 -> DEGRADED
   rule[6] = min(min(sHigh, eGood), min(tNormal, dClean));   // R7 -> HEALTHY
 
@@ -441,7 +484,7 @@ void runFuzzy() {
 volatile unsigned long lowStart = 0;
 volatile unsigned long lowTotal = 0;
 unsigned long dustWindowStart = 0;
-float dustPercent = -1;   // -1 means "not ready yet" (first 30 s)
+float dustPercent = -1;   // -1 means "not ready yet"
 
 void IRAM_ATTR dustChanged() {
   if (digitalRead(DUST_PIN) == LOW) {
@@ -598,6 +641,17 @@ void printPair(String name, float raw, float filtered, int decimals, String unit
   Serial.print(" | ");
 }
 
+void printWeights(const char* label, float* w) {
+  Serial.print(label);
+  for (int j = 0; j < NUM_INDICATORS; j++) {
+    Serial.print(IND_NAMES[j]);
+    Serial.print(" ");
+    Serial.print(w[j], 3);
+    if (j < NUM_INDICATORS - 1) Serial.print(", ");
+  }
+  Serial.println();
+}
+
 int readingNumber = 0;
 bool calibrated = false;
 float lastTempRise = 0;
@@ -643,6 +697,7 @@ void setup() {
   if (USE_OHMS_LAW_VOLTAGE) {
     Serial.println("NOTE: voltage is calculated as I x 120 ohm (GND wire not added yet)");
   }
+  Serial.println("Dust sensor warming up for 60 s");
   Serial.println("Type 1 = relay ON (panel cut), 0 = relay OFF");
   Serial.print("Calibrating Kalman filter for ");
   Serial.print(CALIBRATION_READINGS * READ_EVERY_MS / 1000);
@@ -663,10 +718,11 @@ void loop() {
     }
   }
 
-  // WiFi lost? try again every 30 s
+  // WiFi lost? start a fresh connection every 30 s
   if (WiFi.status() != WL_CONNECTED && millis() - lastWifiTry >= WIFI_RETRY_MS) {
     Serial.println("WiFi lost - reconnecting");
-    WiFi.reconnect();
+    WiFi.disconnect();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     lastWifiTry = millis();
   }
 
@@ -676,7 +732,11 @@ void loop() {
     unsigned long low = lowTotal;
     lowTotal = 0;
     interrupts();
-    dustPercent = (low / 1000.0) / DUST_WINDOW_MS * 100.0;
+
+    // a window that started during the warm-up is not used
+    if (dustWindowStart >= DUST_WARMUP_MS) {
+      dustPercent = (low / 1000.0) / DUST_WINDOW_MS * 100.0;
+    }
     dustWindowStart = millis();
   }
 
@@ -727,7 +787,7 @@ void loop() {
       calibrated = true;
 
       Serial.println();
-      Serial.println("Noise R found from my device:");
+      Serial.println("Noise R found from my device (MAD):");
       Serial.print("  voltage R = "); Serial.println(kfVoltage.r, 8);
       Serial.print("  current R = "); Serial.println(kfCurrent.r, 6);
       Serial.print("  surface R = "); Serial.println(kfSurface.r, 6);
@@ -753,7 +813,7 @@ void loop() {
   printPair("Ambient", ambient, ambientKf, 2, " C");
   Serial.print("Dust: ");
   if (dustPercent < 0) {
-    Serial.println("wait");
+    Serial.println("warming up");
   } else {
     Serial.print(dustPercent, 2);
     Serial.println(" %");
@@ -778,14 +838,8 @@ void loop() {
   } else {
     runEntropy();
 
-    Serial.print("   Weights: ");
-    for (int j = 0; j < NUM_INDICATORS; j++) {
-      Serial.print(IND_NAMES[j]);
-      Serial.print(" ");
-      Serial.print(weights[j], 3);
-      if (j < NUM_INDICATORS - 1) Serial.print(", ");
-    }
-    Serial.println();
+    printWeights("   Entropy weights: ", entropyWeights);
+    printWeights("   Used weights:    ", weights);
 
     Serial.print("   Indicators (1 = good): ");
     for (int j = 0; j < NUM_INDICATORS; j++) {
