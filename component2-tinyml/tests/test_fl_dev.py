@@ -275,6 +275,17 @@ def test_different_input_processing_is_refused(data):
         fl_dev.evaluate_models({"M0": (w, cfg), "X": (w, other)}, tr)
 
 
+def test_fast_macro_f1_equals_sklearn():
+    from sklearn.metrics import f1_score
+    rng = np.random.default_rng(3)
+    for _ in range(50):
+        y = rng.integers(0, 5, 40) if rng.random() < .5 else rng.choice([0, 2, 4], 40)
+        p = rng.integers(0, 5, 40)
+        present = sorted(set(y.tolist()))
+        assert fl_dev.macro_f1_codes(y, p) == pytest.approx(
+            f1_score(y, p, labels=present, average="macro", zero_division=0), abs=1e-12)
+
+
 def test_paired_bootstrap_resamples_whole_runs():
     y = ["NORMAL"] * 6 + ["DUST"] * 6
     t = {"run_id": ["r1"] * 3 + ["r2"] * 3 + ["r3"] * 3 + ["r4"] * 3, "y": y,
@@ -329,6 +340,195 @@ def test_fixed_settings_match_the_committed_protocol():
     assert fl_dev.SEEDS == (0, 1, 2) and "0, 1 and 2" in text
     assert (fl_dev.BOOTSTRAP_RESAMPLES, fl_dev.BOOTSTRAP_SEED) == (2000, 0) and "2,000 resamples, seed 0" in text
     assert fl_dev.CONFIDENCE_THRESHOLD == 0.90 and fl_dev.SGD == {"batch": 32, "lr": 0.05}
+
+
+# ---------------------------------------------------------------- Task 8a: G1 fault counts
+
+def test_fault_counts_from_a_confusion_matrix():
+    cm = np.zeros((5, 5), dtype=int)
+    o, s, n = LABELS.index("OPEN_CIRCUIT"), LABELS.index("SHORT_CIRCUIT"), LABELS.index("NORMAL")
+    cm[o, o], cm[o, n] = 7, 2          # 2 missed OPEN
+    cm[n, o] = 3                       # 3 false OPEN alarms
+    cm[s, s], cm[s, o] = 5, 1          # 1 missed SHORT (read as OPEN: also a false OPEN alarm)
+    cm[n, n] = 10
+    c = fl_dev.fault_counts(cm)
+    assert c["OPEN_CIRCUIT"] == {"true": 9, "detected": 7, "missed": 2, "false_alarms": 4}
+    assert c["SHORT_CIRCUIT"] == {"true": 6, "detected": 5, "missed": 1, "false_alarms": 0}
+
+
+def test_every_model_records_open_short_counts(fold):
+    for m in fold["r"]["metrics"].values():
+        c = m["open_short_counts"]
+        assert c == fl_dev.fault_counts(m["confusion_matrix"])
+        for f, key in (("OPEN_CIRCUIT", "open_circuit_recall"), ("SHORT_CIRCUIT", "short_circuit_recall")):
+            assert c[f]["detected"] + c[f]["missed"] == c[f]["true"]
+            assert m[key] == pytest.approx(c[f]["detected"] / c[f]["true"])
+
+
+# ---------------------------------------------------------------- G2 communication, G3 site records
+
+def test_communication_records_are_simulated_trace_estimates(fold):
+    c, recs = fold["r"]["communication"], fold["r"]["site_records"]
+    assert c["note"].startswith("SIMULATED TRACE ESTIMATES") and "not physical radio measurements" in c["note"]
+    payloads = [x["payload_bytes"] for x in recs]
+    assert c["payload_bytes_total"] == sum(payloads) == c["bytes_attempted"]
+    assert c["payload_bytes_per_update"] == {"min": min(payloads), "max": max(payloads),
+                                             "mean": pytest.approx(np.mean(payloads))}
+    assert c["updates"] == {st: sum(x["status"] == st for x in recs) for st in {x["status"] for x in recs}}
+    assert c["lora_airtime_s"] >= 0 and "radio_energy_mj" in c
+
+
+def test_site_records_cover_every_site_and_round(fold):
+    r = fold["r"]
+    recs, site_data = r["site_records"], fold["log"]["engine"][0]["data"][0]
+    assert sorted((x["round_id"], x["site_id"]) for x in recs) == [(1, s) for s in SITES]
+    for x in recs:
+        assert set(x) == set(fl_dev.SITE_RECORD_COLUMNS)
+        assert x["num_samples"] == len(site_data[x["site_id"]][1])
+        assert x["local_loss_before"] is not None and x["local_loss_after"] is not None
+        assert x["float_delta_l2_norm"] > 0 and x["status"] in ("RECEIVED", "LATE", "FAILED")
+    used = [x for x in recs if x["used_in_round"] == 1]
+    assert sum(x["aggregation_weight"] for x in used) == pytest.approx(1.0, abs=1e-5)
+    n = sum(x["num_samples"] for x in used)
+    assert all(x["aggregation_weight"] == pytest.approx(x["num_samples"] / n, abs=1e-6) for x in used)
+
+
+# ---------------------------------------------------------------- G6 reproducibility
+
+def test_reproducibility_record(fold):
+    rp = fold["r"]["reproducibility"]
+    assert set(rp["environment"]) >= {"python", "numpy", "sklearn", "flwr"} and rp["environment"]["flwr"]
+    a = rp["architecture"]
+    assert (a["inputs"], a["hidden"], a["outputs"], a["n_params"]) == (8, 16, 5, 229)
+    assert a["activation"] == "tanh" and a["feature_version"] == "pv8-v1" and a["labels"] == list(LABELS)
+    assert rp["protocol"]["sha256"] == fd.file_sha256(fd.COMPONENT / "docs" / "FL_EVALUATION_PROTOCOL.md")
+    assert rp["split_file"]["sha256"] == fd.file_sha256(fd.SPLITS_PATH)
+    assert rp["fixed"]["folds"] == [0, 1, 2, 3, 4] and rp["fixed"]["seeds"] == [0, 1, 2]
+    assert rp["fixed"]["rounds"] == 20 and rp["dataset_sha256"] is None                # Test Data: no PV dataset
+
+
+# ---------------------------------------------------------------- G4 summary, G5 failures
+
+def _experiment(engine, data, tmp_path, monkeypatch, run_id="exp-test", folds=(0, 1)):
+    monkeypatch.setattr(engine, "N_ROUNDS", 1)
+    return fl_dev.run_experiment(*data, run_id, engine=engine, allowed_root=tmp_path, folds=folds, seeds=(0,),
+                                 rounds=1)
+
+
+def test_experiment_writes_results_and_a_complete_summary(engine, data, tmp_path, monkeypatch):
+    s, paths = _experiment(engine, data, tmp_path, monkeypatch)
+    assert [p.name for p in paths] == ["fold0_seed0.json", "fold1_seed0.json", "summary.json"]
+    assert json.loads(paths[-1].read_text()) == json.loads(json.dumps(s, default=str))
+    assert s["status"] == "OK" and s["counts"] == {"planned": 2, "succeeded": 2, "failed": 0}
+    assert set(s["models"]) == {"M0", *(f"LOCAL-{x}" for x in SITES), "FL", "CENT-FT", "CENT", "CENT-POOLCFG"}
+    for m in s["models"].values():
+        assert {"readings", "accuracy", "macro_f1", "open_circuit_recall", "short_circuit_recall",
+                "open_short_counts", "below_0_90_share", "crossings_vs_m0"} <= set(m["pooled"])
+        assert set(m["spread"]["macro_f1"]["by_fold_seed"]) == {"fold0_seed0", "fold1_seed0"}
+        assert set(m["spread"]) == set(fl_dev.SPREAD_KEYS) and m["spread"]["open_circuit_recall"]["undefined"] == []
+        assert set(m["spread"]["macro_f1"]["by_fold"]) == {"0", "1"}
+    assert set(s["comparisons"]) == {"FL_vs_M0", "FL_vs_LOCAL_mean", "FL_vs_CENT", "FL_vs_CENT-FT"}
+    assert s["comparisons"]["FL_vs_LOCAL_mean"]["b"] == [f"LOCAL-{x}" for x in SITES]
+    assert all(c["resamples"] == 2000 and c["seed"] == 0 for c in s["comparisons"].values())
+    assert set(s["open_short_safety"]) == {"OPEN_CIRCUIT", "SHORT_CIRCUIT"}
+    assert set(s["confidence_below_0_90"]) == set(s["models"]) and sorted(s["classes_missing_at_site"]) == SITES
+    assert s["communication"]["note"].startswith("SIMULATED TRACE ESTIMATES")
+    assert "need human review" in s["section8_criteria"]["note"] and len(s["section8_criteria"]) == 6
+    n = sum(len(json.loads(p.read_text())["eval_table"]["y"]) for p in paths[:2])
+    assert s["models"]["FL"]["pooled"]["readings"] == n
+
+
+def test_pooled_numbers_are_computed_from_the_eval_tables(engine, data, tmp_path, monkeypatch):
+    s, paths = _experiment(engine, data, tmp_path, monkeypatch)
+    rs = [json.loads(p.read_text()) for p in paths[:2]]
+    y = sum((r["eval_table"]["y"] for r in rs), [])
+    fl = sum((r["eval_table"]["FL"] for r in rs), [])
+    conf = sum((r["eval_table"]["conf:FL"] for r in rs), [])
+    assert s["models"]["FL"]["pooled"]["accuracy"] == pytest.approx(np.mean(np.array(y) == np.array(fl)))
+    assert s["models"]["FL"]["pooled"]["below_0_90_share"] == pytest.approx(np.mean(np.array(conf) < 0.90))
+    f1s = [r["metrics"]["FL"]["macro_f1"] for r in rs]
+    assert s["models"]["FL"]["spread"]["macro_f1"]["mean"] == pytest.approx(np.mean(f1s))
+
+
+def test_a_failing_fold_is_recorded_and_others_continue(engine, data, tmp_path, monkeypatch):
+    real = fl_dev.run_fold
+
+    def flaky(df, a, k, seed, **kw):
+        if k == 1:
+            raise fl_dev.PreflightError("BLOCKED_EMPTY_SITE", "test: SITE-F has no FL readings")
+        return real(df, a, k, seed, **kw)
+    monkeypatch.setattr(fl_dev, "run_fold", flaky)
+    s, paths = _experiment(engine, data, tmp_path, monkeypatch)
+    assert [p.name for p in paths] == ["fold0_seed0.json", "fold1_seed0.FAILED.json", "summary.json"]
+    rec = json.loads(paths[1].read_text())
+    assert rec["status"] == "FAILED" and rec["error_code"] == "BLOCKED_EMPTY_SITE" and rec["metrics"] is None
+    assert s["counts"] == {"planned": 2, "succeeded": 1, "failed": 1} and s["used"] == ["fold0_seed0"]
+    assert s["folds_used"] == [0] and s["failed"][0]["error_code"] == "BLOCKED_EMPTY_SITE"
+    assert list(s["models"]["FL"]["spread"]["macro_f1"]["by_fold_seed"]) == ["fold0_seed0"]   # nothing invented
+
+
+def test_other_errors_are_recorded_with_their_type(engine, data, tmp_path, monkeypatch):
+    real = fl_dev.run_fold
+    monkeypatch.setattr(fl_dev, "run_fold", lambda df, a, k, seed, **kw:
+                        (_ for _ in ()).throw(ValueError("test failure")) if k == 0 else real(df, a, k, seed, **kw))
+    s, paths = _experiment(engine, data, tmp_path, monkeypatch)
+    rec = json.loads(paths[0].read_text())
+    assert paths[0].name == "fold0_seed0.FAILED.json" and rec["error_code"] == "ValueError"
+    assert rec["error"] == "test failure" and s["counts"]["failed"] == 1
+
+
+def test_all_failed_gives_no_metrics(engine, data, tmp_path, monkeypatch):
+    monkeypatch.setattr(fl_dev, "run_fold", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    s, paths = _experiment(engine, data, tmp_path, monkeypatch)
+    assert s["status"] == "NO_SUCCESSFUL_RESULTS" and "models" not in s and "comparisons" not in s
+    assert s["counts"] == {"planned": 2, "succeeded": 0, "failed": 2}
+
+
+@pytest.mark.parametrize("error", [fl_dev.IntegrityError("test"), AssertionError("engine did not start from M0")])
+def test_integrity_failures_stop_everything(engine, data, tmp_path, monkeypatch, error):
+    monkeypatch.setattr(fl_dev, "run_fold", lambda *a, **k: (_ for _ in ()).throw(error))
+    with pytest.raises(type(error)):
+        _experiment(engine, data, tmp_path, monkeypatch)
+    assert not (tmp_path / "exp-test" / "summary.json").exists()
+
+
+def test_integrity_is_rechecked_after_every_fold(engine, data, tmp_path, monkeypatch):
+    calls = []
+    real = fl_dev.verify_artifacts
+
+    def check(d):
+        calls.append(1)
+        if len(calls) == 2:
+            raise ValueError("model_contract.json changed")
+        return real(d)
+    monkeypatch.setattr(fl_dev, "verify_artifacts", check)
+    with pytest.raises(fl_dev.IntegrityError, match="Model v1 artifacts"):
+        _experiment(engine, data, tmp_path, monkeypatch)
+    assert sorted(p.name for p in (tmp_path / "exp-test").iterdir()) == ["fold0_seed0.json"]   # stopped, no summary
+
+
+def test_runs_are_never_overwritten_or_mixed(engine, data, tmp_path, monkeypatch):
+    _experiment(engine, data, tmp_path, monkeypatch, folds=(0,))
+    before = sorted(p.name for p in (tmp_path / "exp-test").iterdir())
+    with pytest.raises(FileExistsError):
+        _experiment(engine, data, tmp_path, monkeypatch, folds=(0,))
+    assert sorted(p.name for p in (tmp_path / "exp-test").iterdir()) == before
+
+
+def test_pv_research_dataset_needs_approval_even_through_run_experiment(engine, data, tmp_path):
+    from tinyml.train import DATASET_SHA256
+    with pytest.raises(PermissionError):
+        fl_dev.run_experiment(*data, "x", dataset_sha256=DATASET_SHA256, engine=engine, allowed_root=tmp_path)
+    assert not any(tmp_path.iterdir())
+
+
+def test_dataset_validation_failure_stops_before_anything_is_written(tmp_path):
+    csv = tmp_path / "pv_fault_dataset.csv"
+    make_test_data().to_csv(csv, index=False)                                         # not the PV Research Dataset
+    out = tmp_path / "runs"
+    with pytest.raises(ValueError, match="SHA-256"):
+        fl_dev.run_protocol(csv, "x", confirm_protocol_run=True, allowed_root=out)
+    assert not out.exists()
 
 
 def test_official_files_unchanged_and_no_dev_runs_folder():
