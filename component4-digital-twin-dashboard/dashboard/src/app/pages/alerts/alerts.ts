@@ -1,21 +1,21 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Alert } from '../../core/models';
+import { Alert, CAUSE_LABEL, PRIORITY_LABEL } from '../../core/models';
 import { TwinApi } from '../../core/twin-api.service';
 import { ColomboTimePipe } from '../../shared/colombo-time';
 
-/** Alert list (rules R01-R05), most urgent first. Click a row for the explanation. */
 @Component({
   selector: 'app-alerts',
   imports: [DecimalPipe, ColomboTimePipe],
   template: `
     <h2>Alerts</h2>
+    <p class="muted">Problems found on the panels, most urgent first. Click a row to see what happened and what to do.</p>
     <div class="toolbar">
       <label>Priority
         <select [value]="priority()" (change)="priority.set($any($event.target).value)">
           <option value="">All</option>
-          @for (p of priorities; track p) { <option [value]="p">{{ p }}</option> }
+          @for (p of priorities; track p) { <option [value]="p">{{ prioLabel[p] }}</option> }
         </select>
       </label>
       <label>Site
@@ -30,19 +30,18 @@ import { ColomboTimePipe } from '../../shared/colombo-time';
     <div class="card table-wrap">
       <table>
         <thead>
-          <tr><th>Priority</th><th>Site</th><th>Physics cause</th><th>Started</th>
-              <th>Readings</th><th>Power loss</th><th>Recommended action</th><th>Respond by</th></tr>
+          <tr><th>Priority</th><th>Site</th><th>Problem</th><th>Started</th>
+              <th>Power lost</th><th>What to do</th><th>Respond by</th></tr>
         </thead>
         <tbody>
           @for (a of shown(); track a.alert_id) {
             <tr (click)="open(a)" tabindex="0" (keydown.enter)="open(a)">
-              <td><span class="prio" [class]="'prio prio-' + a.priority">{{ icon[a.priority] }} {{ a.priority }}</span></td>
+              <td><span [class]="'prio prio-' + a.priority">{{ icon[a.priority] }} {{ prioLabel[a.priority] }}</span></td>
               <td>{{ a.site_id }}</td>
-              <td>{{ a.physics_cause }}</td>
+              <td>{{ causeLabel[a.physics_cause] ?? a.physics_cause }}</td>
               <td>{{ a.start_utc | colomboTime }}</td>
-              <td>{{ a.n_readings }}</td>
-              <td>{{ a.mean_power_loss_pct | number: '1.0-0' }} %</td>
-              <td class="action">{{ a.recommended_action }}</td>
+              <td>about {{ a.mean_power_loss_pct | number: '1.0-0' }}%</td>
+              <td class="action">{{ a.plain_action }}</td>
               <td>{{ a.respond_by_utc | colomboTime }}</td>
             </tr>
           }
@@ -72,6 +71,8 @@ export class Alerts {
 
   priorities = ['CRITICAL', 'HIGH', 'MEDIUM'];
   icon: Record<string, string> = { CRITICAL: '■', HIGH: '◆', MEDIUM: '▲', LOW: '●', INFO: '○' };
+  causeLabel = CAUSE_LABEL;
+  prioLabel = PRIORITY_LABEL;
 
   alerts = signal<Alert[]>([]);
   priority = signal('');

@@ -15,7 +15,7 @@ export interface Site {
     physics_cause: string;
     within_expected_band: boolean;
   };
-  model?: {                                   // only for roles with view_model_status
+  model?: {
     model_version: string;
     latest_published_version: string;
     model_up_to_date: boolean;
@@ -35,7 +35,6 @@ export interface TimePoint {
   irradiance_wm2_est: number;
 }
 
-
 export interface Alert {
   alert_id: string;
   site_id: string;
@@ -47,6 +46,8 @@ export interface Alert {
   mean_power_loss_pct: number;
   rule_id: string;
   recommended_action: string;
+  plain_summary: string;
+  plain_action: string;
   assigned_role: string;
   respond_by_utc: string;
   tinyml_majority: string;
@@ -59,7 +60,7 @@ export interface ShapExplanation {
   predicted_fault: string;
   confidence: number;
   base_value: number;
-  features: { feature: string; value: number }[];   // sorted by |value|, largest first
+  features: { feature: string; value: number }[];
 }
 
 export interface AlertDetail extends Alert {
@@ -68,7 +69,7 @@ export interface AlertDetail extends Alert {
   explanation: string;
   trigger: string;
   target_response_h: number;
-  shap: ShapExplanation | null;                      // null when the role lacks view_shap
+  shap: ShapExplanation | null;
   shap_visible: boolean;
 }
 
@@ -78,3 +79,33 @@ export interface Metrics {
   conformal: { target: number; random_split_coverage: number; temporal_split_coverage: number };
   shap_vs_member2: { median_row_correlation: number; sign_agreement: number; top1_feature_agreement: number };
 }
+
+export const CAUSE_LABEL: Record<string, string> = {
+  NORMAL: 'Working normally',
+  SHORT_CIRCUIT: 'Wiring short',
+  OPEN_CIRCUIT: 'Disconnected',
+  PARTIAL_SHADING: 'Shading',
+  DUST: 'Dust on panel',
+  UNEXPLAINED_LOSS: 'Unclear power loss',
+};
+
+export const PRIORITY_LABEL: Record<string, string> = {
+  CRITICAL: 'Urgent',
+  HIGH: 'High',
+  MEDIUM: 'Medium',
+  LOW: 'Low',
+  INFO: 'Info',
+};
+
+export const FEATURE_LABEL: Record<string, string> = {
+  voltage_v: 'Voltage',
+  current_ma: 'Current',
+  power_mw: 'Power',
+  panel_temp1_c: 'Panel temperature 1',
+  panel_temp2_c: 'Panel temperature 2',
+  ambient_temp_c: 'Air temperature',
+  irradiance_lux: 'Sunlight',
+  dust_vo_v: 'Dust sensor',
+  humidity_pct: 'Humidity',
+  pressure_hpa: 'Air pressure',
+};
