@@ -1,29 +1,41 @@
+import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 OUT = ROOT / "outputs"
 
+load_dotenv(ROOT / ".env")
+MONGO_READER_URI = os.getenv("MONGO_READER_URI")
+MONGO_DB = os.getenv("MONGO_DB", "solar_pv")
 
-@lru_cache
+
 def users() -> pd.DataFrame:
+    if MONGO_READER_URI:
+        from pymongo import MongoClient
+        col = MongoClient(MONGO_READER_URI, serverSelectionTimeoutMS=10000)[MONGO_DB]["dashboard_users"]
+        rows = list(col.find({}, {"_id": 0}))
+        if rows:
+            return pd.DataFrame(rows)
     return pd.read_csv(DATA / "dashboard_users.csv")
+
+
+def users_source() -> str:
+    return "mongodb" if MONGO_READER_URI else "csv"
 
 
 @lru_cache
 def permissions() -> dict[str, set[str]]:
-    """{'ADMIN': {'view_shap', ...}, 'MANAGER': {...}} - only permissions with allowed=True."""
     p = pd.read_csv(DATA / "roles_permissions.csv")
     p = p[p.allowed.astype(str).str.lower() == "true"]
     return p.groupby("role").permission.apply(set).to_dict()
 
 
-
-
-#  twin outputs
 def _ts(df: pd.DataFrame, col="timestamp_utc") -> pd.DataFrame:
     df[col] = pd.to_datetime(df[col], utc=True)
     return df
@@ -36,11 +48,6 @@ def sites() -> pd.DataFrame:
 
 @lru_cache
 def twin_output() -> pd.DataFrame:
-    """One row per live reading: actual vs expected, band, physics_cause, explanation.
-
-    digital_twin_output.csv (data contract) holds only the twin's own columns, so the
-    actual sensor values are joined back from the input on record_id.
-    """
     out = pd.read_csv(OUT / "digital_twin_output.csv")
     actual = pd.read_csv(DATA / "digital_twin_input.csv",
                          usecols=["record_id", "voltage_v", "current_ma", "power_mw", "dust_vo_v"])
@@ -49,7 +56,6 @@ def twin_output() -> pd.DataFrame:
 
 @lru_cache
 def model_status() -> pd.DataFrame:
-    """Latest TinyML model / link status per site (Members 2 + 3, from the joined input)."""
     cols = ["site_id", "timestamp_utc", "model_version", "latest_published_version",
             "model_up_to_date", "last_ota_status", "protocol", "link_quality"]
     d = _ts(pd.read_csv(DATA / "digital_twin_input.csv", usecols=cols))
@@ -68,9 +74,7 @@ def shap_values() -> pd.DataFrame:
 
 @lru_cache
 def metrics() -> dict:
-    """Headline evaluation numbers for the reports page."""
-    import json
-    read = lambda name: json.loads((OUT / name).read_text())   # noqa: E731
+    read = lambda name: json.loads((OUT / name).read_text())
     cal, val = read("twin_calibration.json"), read("validation_metrics.json")
     con, shp = read("conformal_report.json"), read("shap_vs_member2.json")
     return {

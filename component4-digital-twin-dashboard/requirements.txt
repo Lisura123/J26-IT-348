@@ -10,3 +10,5 @@ uvicorn>=0.29
 pyjwt>=2.8
 requests>=2.31
 python-dotenv>=1.0
+pymongo>=4.6
+bcrypt>=4.1
