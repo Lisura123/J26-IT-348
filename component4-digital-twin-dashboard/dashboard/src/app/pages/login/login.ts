@@ -10,7 +10,7 @@ import { AuthService } from '../../core/auth.service';
     <div class="login-page">
       <form class="card" (ngSubmit)="submit()">
         <h1>Solar PV Digital Twin</h1>
-        <p class="muted">Group J26 IT 348 · Component 4</p>
+        <p class="muted">Sign in to see how your solar panels are doing.</p>
 
         <label>Email
           <input name="email" type="email" [(ngModel)]="email" required autocomplete="username" />
@@ -21,8 +21,6 @@ import { AuthService } from '../../core/auth.service';
 
         @if (error()) { <p class="error">{{ error() }}</p> }
         <button type="submit" [disabled]="loading()">{{ loading() ? 'Signing in…' : 'Sign in' }}</button>
-
-        <p class="muted small">Demo users: admin@ / engineer@ / manager@example.com</p>
       </form>
     </div>
   `,
@@ -32,7 +30,6 @@ import { AuthService } from '../../core/auth.service';
     h1 { margin: 0; font-size: 1.4rem; color: var(--green-700); }
     label { display: grid; gap: 4px; font-size: .9rem; }
     .error { color: var(--red-600); margin: 0; }
-    .small { font-size: .8rem; }
   `,
 })
 export class Login {
@@ -50,7 +47,9 @@ export class Login {
     this.auth.login(this.email, this.password).subscribe({
       next: () => this.router.navigate(['/']),
       error: (e) => {
-        this.error.set(e.status === 401 ? 'Invalid email or password' : 'Cannot reach the API on port 8001');
+        this.error.set(e.status === 401
+          ? 'Incorrect email or password. Please try again.'
+          : 'Cannot connect to the server right now. Please try again in a moment.');
         this.loading.set(false);
       },
     });
