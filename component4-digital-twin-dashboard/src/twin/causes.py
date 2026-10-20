@@ -60,3 +60,27 @@ def explain(r) -> str:
     if str(r.model_up_to_date) == "False":
         ml += f" Site model is out of date (latest {r.latest_published_version})."
     return head + why + ml
+
+
+def plain_text(r) -> tuple[str, str]:
+    """Short, non-technical summary + action for managers and operators."""
+    loss = max(0, round(-r.power_residual_pct)) if pd.notna(r.power_residual_pct) else 0
+    text = {
+        "NORMAL": ("The panel is working normally.",
+                   "No action needed."),
+        "SHORT_CIRCUIT": ("The panel's wiring looks short-circuited, so almost no power is reaching the system.",
+                          "Switch the panel off and ask a technician to check the wiring and connectors."),
+        "OPEN_CIRCUIT": ("The panel seems disconnected. No current is flowing.",
+                         "Check for a loose or broken cable or connector."),
+        "DUST": (f"The panel looks dusty. It is making about {loss}% less power than a clean panel would.",
+                 "Clean the panel surface."),
+        "PARTIAL_SHADING": (f"Part of the panel is in shade. It is making about {loss}% less power than expected.",
+                            "Check for anything casting a shadow on the panel, such as trees, wires or nearby objects."),
+        "UNEXPLAINED_LOSS": (f"The panel is making about {loss}% less power than expected, but the cause is not clear.",
+                             "Ask a technician to inspect the panel."),
+    }[r.physics_cause]
+    summary, action = text
+    if r.physics_cause != "NORMAL":
+        summary += (" The AI model agrees." if r.ml_physics_agree
+                    else " The AI model suggests something different, so please double-check.")
+    return summary, action
