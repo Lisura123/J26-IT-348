@@ -15,7 +15,7 @@ TEMP_RISE_BAD = 20.0    # C above a healthy panel
 DUST_BAD = 30.0         # % (DSM501B)
 
 # no grading in the dark (power is 0 at night, that is not a fault)
-MIN_GRADING_LUX = 50.0
+MIN_GRADING_LUX = 1000.0
 
 
 def trap(x, a, b, c, d):
