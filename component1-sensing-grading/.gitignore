@@ -1,6 +1,6 @@
-.venv/
 __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .env
 dry_run_health.json
+firmware/pv_sensor_node/secrets.h
