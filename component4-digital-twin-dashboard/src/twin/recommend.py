@@ -2,9 +2,9 @@ import pandas as pd
 
 from .config import DATA
 
-EPISODE_GAP_S = 60        # a gap longer than this starts a new episode
-DUST_LOSS_PCT = 8.0       # R04: dust/soiling loss must exceed 8 %
-UNEXPLAINED_MIN_N = 3     # R05: more than 3 consecutive readings
+EPISODE_GAP_S = 60
+DUST_LOSS_PCT = 8.0
+UNEXPLAINED_MIN_N = 3
 
 CAUSE_TO_RULE = {"SHORT_CIRCUIT": "R01", "OPEN_CIRCUIT": "R02", "PARTIAL_SHADING": "R03",
                  "DUST": "R04", "UNEXPLAINED_LOSS": "R05"}
@@ -30,7 +30,9 @@ def episodes(out: pd.DataFrame) -> pd.DataFrame:
         mean_power_loss_pct=("power_residual_pct", lambda s: -s.mean()),
         tinyml_majority=("predicted_fault", lambda s: s.mode()[0]),
         tinyml_agree_frac=("ml_physics_agree", "mean"),
-        explanation=("dashboard_explanation", "first"))
+        explanation=("dashboard_explanation", "first"),
+        plain_summary=("plain_summary", "first"),
+        plain_action=("plain_action", "first"))
 
 
 def recommend(out: pd.DataFrame) -> pd.DataFrame:

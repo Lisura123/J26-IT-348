@@ -16,7 +16,6 @@ PRIORITY_STATUS = {"CRITICAL": "FAULT", "HIGH": "FAULT", "MEDIUM": "WARNING"}
 
 
 def clean(value):
-    """Make pandas/numpy values JSON-safe (NaN -> None, Timestamp -> ISO string)."""
     if isinstance(value, dict):
         return {k: clean(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -25,7 +24,7 @@ def clean(value):
         return value.strftime("%Y-%m-%dT%H:%M:%SZ")
     if isinstance(value, float) and math.isnan(value):
         return None
-    if hasattr(value, "item"):          # numpy scalar -> python scalar
+    if hasattr(value, "item"):
         return clean(value.item())
     return value
 
@@ -39,7 +38,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-#  auth
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -55,10 +53,8 @@ def me(user: dict = Depends(auth.current_user)):
     return auth.public_user(user)
 
 
-#  sites
 @app.get("/sites")
 def list_sites(user: dict = Depends(auth.require("view_live_dashboard"))):
-    """Site overview: latest twin reading, open alerts and model status for all 6 panels."""
     out, al, ms = ds.twin_output(), ds.alerts(), ds.model_status()
     latest = out.groupby("site_id").tail(1).set_index("site_id")
     result = []
@@ -83,7 +79,6 @@ def list_sites(user: dict = Depends(auth.require("view_live_dashboard"))):
 
 @app.get("/sites/{site_id}/timeseries")
 def site_timeseries(site_id: str, user: dict = Depends(auth.require("view_live_dashboard"))):
-    """Actual vs twin-expected power with the conformal band, for the panel detail chart."""
     out = ds.twin_output()
     d = out[out.site_id == site_id]
     if d.empty:
@@ -93,18 +88,17 @@ def site_timeseries(site_id: str, user: dict = Depends(auth.require("view_live_d
     return clean(d[cols].to_dict(orient="records"))
 
 
-#  alerts
 @app.get("/alerts")
 def list_alerts(user: dict = Depends(auth.require("view_live_dashboard"))):
     cols = ["alert_id", "site_id", "physics_cause", "priority", "start_utc", "end_utc",
             "n_readings", "mean_power_loss_pct", "rule_id", "recommended_action",
+            "plain_summary", "plain_action",
             "assigned_role", "respond_by_utc", "tinyml_majority", "tinyml_agree_frac"]
     return clean(ds.alerts()[cols].to_dict(orient="records"))
 
 
 @app.get("/alerts/{alert_id}")
 def alert_detail(alert_id: str, user: dict = Depends(auth.require("view_explanations"))):
-    """Alert + explanation text; SHAP is attached ONLY for roles with view_shap."""
     al = ds.alerts()
     match = al[al.alert_id == alert_id]
     if match.empty:
@@ -133,7 +127,6 @@ def shap_for(record_id: str) -> dict | None:
                                key=lambda f: -abs(f["value"]))}
 
 
-# reports
 @app.get("/metrics")
 def metrics(user: dict = Depends(auth.require("view_reports"))):
     return clean(ds.metrics())
