@@ -1,14 +1,20 @@
 import math
+import sys
+from collections import Counter
+from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from twin import device_health as dh
+
 from . import auth
 from . import data_source as ds
 
-app = FastAPI(title="Member 4 - Digital Twin API", version="0.2.0")
+app = FastAPI(title="Member 4 - Digital Twin API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:4200"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -130,3 +136,42 @@ def shap_for(record_id: str) -> dict | None:
 @app.get("/metrics")
 def metrics(user: dict = Depends(auth.require("view_reports"))):
     return clean(ds.metrics())
+
+
+VALUES = ["voltage_v", "current_ma", "power_mw", "irradiance_lux", "panel_temp1_c",
+          "ambient_temp_c", "dust_lpo_pct", "health_score"]
+
+
+@app.get("/devices/{site_id}/health")
+def device_health(site_id: str, limit: int = 500,
+                  user: dict = Depends(auth.require("log_maintenance"))):
+    try:
+        docs = ds.device_health(site_id, min(limit, 2000))
+    except Exception as e:
+        raise HTTPException(503, f"Device health database unavailable ({type(e).__name__})")
+    if not docs:
+        raise HTTPException(404, f"No device health data for {site_id} in {ds.HEALTH_COLLECTION}")
+
+    latest = docs[0]
+    counts, last_seen = Counter(), {}
+    for d in docs:
+        for code in dh.split_flags(d.get("quality_flag")):
+            if code != "OK":
+                counts[code] += 1
+                last_seen.setdefault(code, d["timestamp_utc"])
+    issues = [{**dh.explain_flag(c), "count": n, "last_seen_utc": last_seen[c]} for c, n in counts.items()]
+    issues.sort(key=lambda i: (-dh.RANK.get(i["severity"], 0), -i["count"]))
+
+    return clean({
+        "site_id": site_id,
+        "device_id": latest.get("device_id"),
+        "collection": ds.HEALTH_COLLECTION,
+        "n_readings": len(docs),
+        "from_utc": docs[-1]["timestamp_utc"],
+        "to_utc": latest["timestamp_utc"],
+        "latest": {"timestamp_utc": latest["timestamp_utc"], "record_id": latest.get("record_id"),
+                   "values": {k: latest.get(k) for k in VALUES if k in latest},
+                   **dh.explain_reading(latest)},
+        "status_counts": dict(Counter(d.get("health_status") or "MISSING" for d in docs)),
+        "issues": issues,
+    })

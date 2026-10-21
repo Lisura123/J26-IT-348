@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,20 +14,50 @@ OUT = ROOT / "outputs"
 load_dotenv(ROOT / ".env")
 MONGO_READER_URI = os.getenv("MONGO_READER_URI")
 MONGO_DB = os.getenv("MONGO_DB", "solar_pv")
+HEALTH_COLLECTION = os.getenv("HEALTH_COLLECTION", "device_sensor_health")
+
+_users_source = "csv"
+
+
+@lru_cache
+def _db():
+    from pymongo import MongoClient
+    return MongoClient(MONGO_READER_URI, serverSelectionTimeoutMS=5000)[MONGO_DB]
 
 
 def users() -> pd.DataFrame:
+    global _users_source
     if MONGO_READER_URI:
-        from pymongo import MongoClient
-        col = MongoClient(MONGO_READER_URI, serverSelectionTimeoutMS=10000)[MONGO_DB]["dashboard_users"]
-        rows = list(col.find({}, {"_id": 0}))
-        if rows:
-            return pd.DataFrame(rows)
+        try:
+            rows = list(_db()["dashboard_users"].find({}, {"_id": 0}))
+            if rows:
+                _users_source = "mongodb"
+                return pd.DataFrame(rows)
+        except Exception as e:
+            print(f"[data_source] MongoDB users unavailable ({type(e).__name__}); using CSV fallback")
+    _users_source = "csv"
     return pd.read_csv(DATA / "dashboard_users.csv")
 
 
 def users_source() -> str:
-    return "mongodb" if MONGO_READER_URI else "csv"
+    return _users_source
+
+
+def _utc(t) -> str | None:
+    if isinstance(t, datetime):
+        t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return t
+
+
+def device_health(site_id: str, limit: int = 500) -> list[dict]:
+    if not MONGO_READER_URI:
+        return []
+    docs = list(_db()[HEALTH_COLLECTION].find({"site_id": site_id}, {"_id": 0})
+                .sort("timestamp_utc", -1).limit(limit))
+    for d in docs:
+        d["timestamp_utc"] = _utc(d.get("timestamp_utc"))
+    return docs
 
 
 @lru_cache
