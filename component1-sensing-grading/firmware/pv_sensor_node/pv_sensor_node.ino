@@ -703,10 +703,9 @@ void loop() {
   }
 
   // ---------------- Serial Monitor ----------------
+  // line 1: the readings
   Serial.print(timeText[0] ? timeText : "no-time");
-  Serial.print(" | I raw: ");    Serial.print(rawCurrent, 1);
-  Serial.print(" -> KF: ");      Serial.print(current, 2);
-  Serial.print(" mA | V: ");     Serial.print(voltage, 3);
+  Serial.print(" |V: ");         Serial.print(voltage, 3);
   Serial.print(" V | P: ");      Serial.print(power, 2);
   Serial.print(" mW | Light: "); Serial.print(lux, 0);
   Serial.print(" lux | Surface: ");
@@ -716,12 +715,17 @@ void loop() {
   Serial.print(" C | Dust: ");
   if (dustPercent < 0) Serial.print("warming up"); else { Serial.print(dustPercent, 2); Serial.print(" %"); }
   Serial.print(" | Relay: ");    Serial.print(relayOn ? "ON" : "OFF");
-  Serial.print(" | Flag: ");     Serial.println(qualityFlag);
+  Serial.println(" | ");
 
-  Serial.print("   Stage 3: ratios P/V/I ");  Serial.print(powerRatio, 2);
-  Serial.print(" / ");                        Serial.print(voltageRatio, 2);
-  Serial.print(" / ");                        Serial.print(currentRatio, 2);
-  Serial.print(" | S = ");                    Serial.print(weightedScore, 1);
+  // line 2: the pipeline (Stage 1 flag, Kalman, Stage 3, Stage 4)
+  Serial.print("Flag: ");        Serial.print(qualityFlag);
+  Serial.print(" | I raw: ");    Serial.print(rawCurrent, 1);
+  Serial.print(" -> KF: ");      Serial.print(current, 2);
+  Serial.print(" mA |Stage 3: ratios P/V/I ");
+  Serial.print(powerRatio, 2);   Serial.print(" / ");
+  Serial.print(voltageRatio, 2); Serial.print(" / ");
+  Serial.print(currentRatio, 2);
+  Serial.print(" |S = ");        Serial.print(weightedScore, 1);
   Serial.print("   Stage 4: ");
   if (isnan(healthScore)) {
     Serial.print("NOT_GRADED (");
