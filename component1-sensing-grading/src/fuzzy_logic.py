@@ -6,16 +6,26 @@ try:
 except ImportError:
     from src.entropy_weighting import INDICATORS, make_indicators, normalize, entropy_weights
 
-# combined weighting: half from entropy, half shared equally
-# (so one changing indicator cannot take all the weight)
+
 ENTROPY_SHARE = 0.5
 
-# fixed ranges for the score of each indicator (1 = good, 0 = bad)
+
 TEMP_RISE_BAD = 20.0    # C above a healthy panel
 DUST_BAD = 30.0         # % (DSM501B)
 
-# no grading in the dark (power is 0 at night, that is not a fault)
+# no grading in very low light: below 500 lux the panel gives less than 1 mA,
+# only a few steps of the INA219 (0.1 mA), so the ratios are just noise
 MIN_GRADING_LUX = 500.0
+
+# the combined weights of the site datasets (notebook 06), the same numbers
+# as in the ESP32 firmware; use them for new data (e.g. my device)
+FIXED_WEIGHTS = pd.Series({
+    "power_ratio": 0.237,
+    "voltage_ratio": 0.175,
+    "current_ratio": 0.166,
+    "temp_rise": 0.309,
+    "dust_level": 0.113,
+})
 
 
 def trap(x, a, b, c, d):
@@ -98,17 +108,20 @@ def health_status(score):
            np.where(score >= 40, "DEGRADED", "FAULTY")))
 
 
-def run_fuzzy_stage(df):
+def run_fuzzy_stage(df, weights=None):
     # input: output of run_kalman_stage(), output: the same rows with the grade
+    # weights=None -> entropy weights from this data (site datasets)
+    # weights=FIXED_WEIGHTS -> the same weights as the ESP32 (device data)
     df = df.copy()
     ind = make_indicators(df)
     scores = indicator_scores(ind)
-    weights = combined_weights(ind)
+    if weights is None:
+        weights = combined_weights(ind)
 
     S = (scores[list(INDICATORS)] * weights[list(INDICATORS)]).sum(axis=1) * 100
     E = scores[["voltage_ratio", "current_ratio"]].min(axis=1)
     health = fuzzy_grade(S.to_numpy(), E.to_numpy(),
-                         scores["temp_rise"].to_numpy(), scores["dust_level"].to_numpy())
+                               scores["temp_rise"].to_numpy(), scores["dust_level"].to_numpy())
 
     # too dark to grade: no score (left out when sent to the backend)
     dark = (df["irradiance_lux"] < MIN_GRADING_LUX).to_numpy()
