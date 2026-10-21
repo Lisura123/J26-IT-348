@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <time.h>
+#include <math.h>
 #include <Adafruit_INA219.h>
 #include <Adafruit_ADS1X15.h>
 #include <OneWire.h>
@@ -27,11 +28,26 @@
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
 #define DUST_WARMUP_MS 60000  // and about 1 min to warm up
 #define LOAD_OHMS 120.0       // panel(-) is isolated, so V = I x R
+#define SHUNT_OHMS 0.1        // INA219 shunt (R100)
 #define TEMP_MISSING -127.0   // same sentinel as the datasets
 #define RELAY_SETTLE_MS 500   // power dips for a moment when the relay switches
 
 #define BATCH_SIZE 15         // send 15 readings (30 s) in one request
-#define JSON_LINE_MAX 360
+#define JSON_LINE_MAX 420
+
+// ---------------- Stage 1 settings (same as src/data_quality.py) ----------------
+#define SIGN_WINDOW 31        // last 31 readings (~1 min) for the wire-reversed check
+#define SPIKE_WINDOW 5        // same as rolling(5) in Python
+#define V_PANEL_MAX 6.5       // V, a bit above Voc
+#define SHORT_PATH_OHMS 0.6   // shunt 0.1 + wires and relay 0.5
+
+// ---------------- Stage 2 settings (same as src/kalman_filter.py) ----------------
+// R = noise variance, measured from my device (log_003.csv, estimate_noise())
+// Q = 0.3 R for voltage and current, 0.1 R for temperature
+#define R_VOLTAGE 0.000954897
+#define R_CURRENT 0.134809
+#define R_TEMP1   0.00032673
+#define R_AMBIENT 0.000230931
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
@@ -63,7 +79,6 @@ bool timeOk = false;
 char batch[BATCH_SIZE][JSON_LINE_MAX];
 int batchCount = 0;
 unsigned long lastWifiTry = 0;
-unsigned long sentTotal = 0, acceptedTotal = 0;
 
 void IRAM_ATTR dustChanged() {
   if (digitalRead(DUST_PIN) == LOW) {
@@ -73,29 +88,107 @@ void IRAM_ATTR dustChanged() {
   }
 }
 
-// ---------------- WiFi and time ----------------
+// =====================================================================
+// Stage 1: data quality
+// =====================================================================
+
+char qualityFlag[120];
+
+void addFlag(const char* name) {
+  // same as add_flag() in Python: join flags with "|"
+  if (strcmp(qualityFlag, "OK") == 0) {
+    strncpy(qualityFlag, name, sizeof(qualityFlag) - 1);
+    qualityFlag[sizeof(qualityFlag) - 1] = '\0';
+  } else {
+    strncat(qualityFlag, "|", sizeof(qualityFlag) - strlen(qualityFlag) - 1);
+    strncat(qualityFlag, name, sizeof(qualityFlag) - strlen(qualityFlag) - 1);
+  }
+}
+
+// a small window that keeps the last N values
+struct Window {
+  float values[SIGN_WINDOW];
+  int size;
+  int count;
+  int next;
+
+  void begin(int n) { size = n; count = 0; next = 0; }
+
+  void add(float v) {
+    values[next] = v;
+    next = (next + 1) % size;
+    if (count < size) count++;
+  }
+
+  float median() {
+    if (count == 0) return 0;
+    float tmp[SIGN_WINDOW];
+    for (int i = 0; i < count; i++) tmp[i] = values[i];
+    // insertion sort (the window is small)
+    for (int i = 1; i < count; i++) {
+      float key = tmp[i];
+      int j = i - 1;
+      while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
+      tmp[j + 1] = key;
+    }
+    if (count % 2 == 1) return tmp[count / 2];
+    return (tmp[count / 2 - 1] + tmp[count / 2]) / 2.0;
+  }
+
+  // a spike is far from its neighbours (more than 50 %, and more than minJump)
+  float fixSpike(float value, float minJump, const char* flagName) {
+    add(value);
+    float med = median();
+    float jump = fabs(value - med);
+    if (count >= 3 && jump > 0.5 * fabs(med) && jump > minJump) {
+      addFlag(flagName);
+      return med;
+    }
+    return value;
+  }
+};
+
+Window signWindow;
+Window spikeI, spikeLux;
+
+// =====================================================================
+// Stage 2: Kalman filter (same as kalman_1d() in Python)
+// =====================================================================
+
+struct Kalman {
+  float q, r;
+  float x = 0, p = 1;
+  bool started = false;
+
+  void begin(float r_, float ratio) { r = r_; q = ratio * r_; started = false; }
+
+  // valid = false: the reading is missing, so we only predict
+  float update(float z, bool valid) {
+    if (!started) {
+      if (!valid) return NAN;
+      x = z;
+      p = r;
+      started = true;
+      return x;
+    }
+    p = p + q;
+    if (valid) {
+      float k = p / (p + r);   // Kalman gain (0 to 1)
+      x = x + k * (z - x);     // move the guess toward the reading
+      p = (1 - k) * p;         // we are now more sure
+    }
+    return x;
+  }
+};
+
+Kalman kfVoltage, kfCurrent, kfTemp1, kfAmbient;
+
+// =====================================================================
+// WiFi and time
+// =====================================================================
 
 void startWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(200);
-
-  // 1) which networks can the ESP32 see? (only 2.4 GHz)
-  Serial.println("WiFi scan:");
-  int found = WiFi.scanNetworks();
-  bool seen = false;
-  for (int i = 0; i < found; i++) {
-    Serial.print("   ");
-    Serial.print(WiFi.SSID(i));
-    Serial.print("  (");
-    Serial.print(WiFi.RSSI(i));
-    Serial.println(" dBm)");
-    if (WiFi.SSID(i) == String(WIFI_SSID)) seen = true;
-  }
-  Serial.println(seen ? "   -> my hotspot is in the list"
-                      : "   -> my hotspot is NOT in the list (Maximize Compatibility? name in secrets.h?)");
-
-  // 2) connect
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("WiFi: connecting");
   unsigned long t0 = millis();
@@ -104,18 +197,11 @@ void startWiFi() {
     Serial.print(".");
   }
   Serial.println();
-
-  wl_status_t s = WiFi.status();
-  if (s == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
     Serial.print("WiFi OK, ESP32 IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.print("WiFi: not connected, status = ");
-    Serial.print(s);
-    if (s == WL_NO_SSID_AVAIL) Serial.println(" (network not found)");
-    else if (s == WL_CONNECT_FAILED) Serial.println(" (wrong password?)");
-    else if (s == WL_DISCONNECTED) Serial.println(" (disconnected / still trying)");
-    else Serial.println();
+    Serial.println("WiFi: not connected (will try again, readings still go to SD)");
   }
   lastWifiTry = millis();
 }
@@ -131,7 +217,7 @@ void keepWiFi() {
 }
 
 void startTime() {
-  configTime(0, 0, "pool.ntp.org", "time.google.com");   // UTC, no daylight saving
+  configTime(0, 0, "pool.ntp.org", "time.google.com");   // UTC
   struct tm t;
   if (getLocalTime(&t, 10000)) {
     timeOk = true;
@@ -142,7 +228,6 @@ void startTime() {
 }
 
 bool nowUtc(char* out, size_t size) {
-  // "2026-10-21T12:34:56Z", or false if the time is not known yet
   time_t now = time(nullptr);
   if (now < 1700000000) return false;   // clock not set yet
   timeOk = true;
@@ -152,7 +237,9 @@ bool nowUtc(char* out, size_t size) {
   return true;
 }
 
-// ---------------- SD card ----------------
+// =====================================================================
+// SD card (RAW readings, so Python can run the same pipeline later)
+// =====================================================================
 
 void startSD() {
   SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
@@ -161,7 +248,6 @@ void startSD() {
     return;
   }
 
-  // a new file every time the ESP32 starts: /log_001.csv, /log_002.csv ...
   for (int n = 1; n < 1000; n++) {
     char name[16];
     sprintf(name, "/log_%03d.csv", n);
@@ -190,7 +276,6 @@ void saveToSD(const char* recordId, const char* timeText, float voltage, float c
               float power, float lux, float surface, float ambient) {
   if (!sdOk) return;
 
-  // the relay coil makes the power dip for a moment: wait before writing
   unsigned long sinceRelay = millis() - relayChangedAt;
   if (sinceRelay < RELAY_SETTLE_MS) delay(RELAY_SETTLE_MS - sinceRelay);
 
@@ -211,20 +296,22 @@ void saveToSD(const char* recordId, const char* timeText, float voltage, float c
   f.close();
 }
 
-// ---------------- backend ----------------
+// =====================================================================
+// backend (FILTERED readings + quality_flag)
+// =====================================================================
 
 void addToBatch(const char* recordId, const char* timeText, float voltage, float current,
                 float power, float lux, float surface, float ambient) {
-  // one JSON record; a missing value is LEFT OUT, never sent as 0
+  // a missing value is LEFT OUT, never sent as 0
   char* p = batch[batchCount];
   int n = snprintf(p, JSON_LINE_MAX,
     "{\"timestamp_utc\":\"%s\",\"record_id\":\"%s\",\"site_id\":\"%s\",\"device_id\":\"%s\","
-    "\"quality_flag\":\"OK\",\"voltage_v\":%.4f,\"current_ma\":%.2f,\"power_mw\":%.4f,"
+    "\"quality_flag\":\"%s\",\"voltage_v\":%.4f,\"current_ma\":%.2f,\"power_mw\":%.4f,"
     "\"irradiance_lux\":%.1f",
-    timeText, recordId, SITE_ID, DEVICE_ID, voltage, current, power, lux);
-  if (surface != TEMP_MISSING) n += snprintf(p + n, JSON_LINE_MAX - n, ",\"panel_temp1_c\":%.4f", surface);
-  if (ambient != TEMP_MISSING) n += snprintf(p + n, JSON_LINE_MAX - n, ",\"ambient_temp_c\":%.4f", ambient);
-  if (dustPercent >= 0)        n += snprintf(p + n, JSON_LINE_MAX - n, ",\"dust_lpo_pct\":%.2f", dustPercent);
+    timeText, recordId, SITE_ID, DEVICE_ID, qualityFlag, voltage, current, power, lux);
+  if (!isnan(surface))  n += snprintf(p + n, JSON_LINE_MAX - n, ",\"panel_temp1_c\":%.4f", surface);
+  if (!isnan(ambient))  n += snprintf(p + n, JSON_LINE_MAX - n, ",\"ambient_temp_c\":%.4f", ambient);
+  if (dustPercent >= 0) n += snprintf(p + n, JSON_LINE_MAX - n, ",\"dust_lpo_pct\":%.2f", dustPercent);
   snprintf(p + n, JSON_LINE_MAX - n, "}");
   batchCount++;
 }
@@ -253,19 +340,19 @@ void sendBatch() {
   String reply = http.getString();
   http.end();
 
-  sentTotal += batchCount;
   Serial.print("   Backend: sent ");
   Serial.print(batchCount);
   Serial.print(" | HTTP ");
   Serial.print(code);
   Serial.print(" | ");
   Serial.println(reply);
-  if (code == 200 && reply.indexOf("\"rejected\":0") >= 0) acceptedTotal += batchCount;
 
   batchCount = 0;
 }
 
-// ---------------- relay ----------------
+// =====================================================================
+// relay
+// =====================================================================
 
 void setRelay(bool on) {
   // low trigger: LOW = ON = panel cut, HIGH = OFF = panel connected
@@ -275,15 +362,16 @@ void setRelay(bool on) {
   Serial.println(on ? ">> Relay ON - panel cut" : ">> Relay OFF - panel connected");
 }
 
-// ---------------- main ----------------
+// =====================================================================
+// main
+// =====================================================================
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  // relay OFF at start (low trigger, so HIGH = OFF = panel connected)
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH);
+  digitalWrite(RELAY_PIN, HIGH);   // relay OFF = panel connected
 
   Wire.begin(SDA_PIN, SCL_PIN);
   if (!ina219.begin()) Serial.println("ERROR: INA219 not found");
@@ -291,15 +379,26 @@ void setup() {
   ads.setGain(GAIN_ONE);   // +/- 4.096 V
 
   probes.begin();
-  probes.setWaitForConversion(false);   // do not block the loop
+  probes.setWaitForConversion(false);
   probes.requestTemperatures();
 
   pinMode(DUST_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(DUST_PIN), dustChanged, CHANGE);
 
+  // Stage 1 windows
+  signWindow.begin(SIGN_WINDOW);
+  spikeI.begin(SPIKE_WINDOW);
+  spikeLux.begin(SPIKE_WINDOW);
+
+  // Stage 2 filters
+  kfVoltage.begin(R_VOLTAGE, 0.3);
+  kfCurrent.begin(R_CURRENT, 0.3);
+  kfTemp1.begin(R_TEMP1, 0.1);
+  kfAmbient.begin(R_AMBIENT, 0.1);
+
   Serial.println();
   Serial.println("=============================================");
-  Serial.println("  PV sensor node - Member 1");
+  Serial.println("  PV sensor node - Member 1 (Stage 1 + 2)");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -314,7 +413,6 @@ void setup() {
 void loop() {
   keepWiFi();
 
-  // relay control from Serial Monitor
   if (Serial.available()) {
     char c = Serial.read();
     if (c == '1') setRelay(true);
@@ -337,50 +435,88 @@ void loop() {
   lastRead = millis();
   readingNumber++;
 
-  // INA219: current is measured, voltage is calculated (V = I x R + shunt)
-  float current = ina219.getCurrent_mA();
-  if (current < 0.5 && current > -0.5) current = 0.0;   // noise around 0
-  float voltage = current / 1000.0 * LOAD_OHMS + ina219.getShuntVoltage_mV() / 1000.0;
-  if (current == 0.0) voltage = 0.0;
-  float power = voltage * current;
+  // ---------------- read the sensors (RAW) ----------------
+  float rawCurrent = ina219.getCurrent_mA();
+  if (rawCurrent < 0.5 && rawCurrent > -0.5) rawCurrent = 0.0;   // noise around 0
+  float rawVoltage = rawCurrent / 1000.0 * (LOAD_OHMS + SHUNT_OHMS);
+  float rawPower = rawVoltage * rawCurrent;
 
-  // TEMT6000 through ADS1115 A0
   float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
-  float lux = lightV * 200.0;   // rough value with the 10k resistor on the board
+  float rawLux = lightV * 200.0;   // rough value with the 10k resistor on the board
 
-  // DS18B20: read the last result, then start the next one
-  float surface = probes.getTempC(PANEL_PROBE);
-  float ambient = probes.getTempC(AIR_PROBE);
+  float rawSurface = probes.getTempC(PANEL_PROBE);
+  float rawAmbient = probes.getTempC(AIR_PROBE);
   probes.requestTemperatures();
-  if (surface == DEVICE_DISCONNECTED_C) surface = TEMP_MISSING;
-  if (ambient == DEVICE_DISCONNECTED_C) ambient = TEMP_MISSING;
+  if (rawSurface == DEVICE_DISCONNECTED_C) rawSurface = TEMP_MISSING;
+  if (rawAmbient == DEVICE_DISCONNECTED_C) rawAmbient = TEMP_MISSING;
 
   char recordId[24];
   sprintf(recordId, "M1-DEV-%03d-%07lu", bootNumber, readingNumber);
   char timeText[24] = "";
   bool haveTime = nowUtc(timeText, sizeof(timeText));
 
-  saveToSD(recordId, timeText, voltage, current, power, lux, surface, ambient);
+  // SD gets the RAW reading
+  saveToSD(recordId, timeText, rawVoltage, rawCurrent, rawPower, rawLux, rawSurface, rawAmbient);
 
-  // the backend needs a real UTC time, so only send when the clock is set
+  // ---------------- Stage 1: data quality ----------------
+  strcpy(qualityFlag, "OK");
+
+  // temperature: -127 is not a real value
+  bool surfaceOk = rawSurface != TEMP_MISSING;
+  bool ambientOk = rawAmbient != TEMP_MISSING;
+  if (!surfaceOk) addFlag("TEMP1_SENTINEL_-127");
+  if (!ambientOk) addFlag("AMBIENT_TEMP_SENTINEL_-127");
+
+  // wire reversed: the median of the last minute is negative
+  float current = rawCurrent;
+  signWindow.add(rawCurrent);
+  if (signWindow.median() < 0) {
+    addFlag("CURRENT_SIGN_REVERSED");
+    current = -current;
+  }
+  if (current < 0) current = 0.0;   // a small negative left is just noise
+
+  // spikes (one reading far from its neighbours)
+  // on my device V = I x R, so we check the current only and then
+  // calculate the voltage from the fixed current (they always match)
+  float before = current;
+  current = spikeI.fixSpike(current, 3.0, "SPIKE_CURRENT");
+  if (current != before) addFlag("SPIKE_VOLTAGE");   // the voltage jumped with it
+  float voltage = current / 1000.0 * (LOAD_OHMS + SHUNT_OHMS);
+  float lux = spikeLux.fixSpike(rawLux, 1000.0, "SPIKE_IRRADIANCE");
+
+  // load shorted: a voltage above Voc is impossible
+  if (voltage > V_PANEL_MAX) {
+    addFlag("LOAD_SHORTED");
+    voltage = current / 1000.0 * SHORT_PATH_OHMS;
+  }
+
+  // ---------------- Stage 2: Kalman filter ----------------
+  voltage = kfVoltage.update(voltage, true);
+  current = kfCurrent.update(current, true);
+  float surface = kfTemp1.update(rawSurface, surfaceOk);     // missing -> predicted
+  float ambient = kfAmbient.update(rawAmbient, ambientOk);
+  float power = voltage * current;   // power again, from the filtered values
+
+  // ---------------- send to the backend ----------------
   if (haveTime) {
     addToBatch(recordId, timeText, voltage, current, power, lux, surface, ambient);
     if (batchCount >= BATCH_SIZE) sendBatch();
   }
 
+  // ---------------- Serial Monitor ----------------
   Serial.print(timeText[0] ? timeText : "no-time");
-  Serial.print(" | V(calc): ");  Serial.print(voltage, 2);
-  Serial.print(" V | I: ");      Serial.print(current, 1);
-  Serial.print(" mA | P: ");     Serial.print(power, 1);
+  Serial.print(" | I raw: ");    Serial.print(rawCurrent, 1);
+  Serial.print(" -> KF: ");      Serial.print(current, 2);
+  Serial.print(" mA | V: ");     Serial.print(voltage, 3);
+  Serial.print(" V | P: ");      Serial.print(power, 2);
   Serial.print(" mW | Light: "); Serial.print(lux, 0);
   Serial.print(" lux | Surface: ");
-  if (surface == TEMP_MISSING) Serial.print("--"); else Serial.print(surface, 2);
+  if (isnan(surface)) Serial.print("--"); else Serial.print(surface, 2);
   Serial.print(" C | Ambient: ");
-  if (ambient == TEMP_MISSING) Serial.print("--"); else Serial.print(ambient, 2);
+  if (isnan(ambient)) Serial.print("--"); else Serial.print(ambient, 2);
   Serial.print(" C | Dust: ");
   if (dustPercent < 0) Serial.print("warming up"); else { Serial.print(dustPercent, 2); Serial.print(" %"); }
-  Serial.print(" | Relay: ");
-  Serial.print(relayOn ? "ON" : "OFF");
-  Serial.print(" | WiFi: ");
-  Serial.println(WiFi.status() == WL_CONNECTED ? "OK" : "--");
+  Serial.print(" | Relay: ");    Serial.print(relayOn ? "ON" : "OFF");
+  Serial.print(" | Flag: ");     Serial.println(qualityFlag);
 }
