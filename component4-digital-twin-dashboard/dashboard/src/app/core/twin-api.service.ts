@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { API_URL } from './api';
-import { Alert, AlertDetail, Metrics, Site, TimePoint } from './models';
+import { Alert, AlertDetail, DeviceHealth, Metrics, Site, TimePoint } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class TwinApi {
@@ -25,5 +25,9 @@ export class TwinApi {
 
   metrics() {
     return this.http.get<Metrics>(`${API_URL}/metrics`);
+  }
+
+  deviceHealth(siteId: string, limit = 500) {
+    return this.http.get<DeviceHealth>(`${API_URL}/devices/${siteId}/health`, { params: { limit } });
   }
 }

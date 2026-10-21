@@ -2,7 +2,6 @@ import { Component, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 
-/** Top bar + navigation. Links appear only if the role holds the permission. */
 @Component({
   selector: 'app-shell',
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
@@ -12,6 +11,7 @@ import { AuthService } from '../core/auth.service';
       <nav>
         <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Sites</a>
         @if (auth.can('view_explanations')) { <a routerLink="/alerts" routerLinkActive="active">Alerts</a> }
+        @if (auth.can('log_maintenance')) { <a routerLink="/devices" routerLinkActive="active">Device health</a> }
         @if (auth.can('view_reports')) { <a routerLink="/reports" routerLinkActive="active">Reports</a> }
       </nav>
       <span class="user">{{ auth.user()?.name }} <span class="badge">{{ auth.user()?.role }}</span></span>

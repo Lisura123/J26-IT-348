@@ -80,7 +80,39 @@ export interface Metrics {
   shap_vs_member2: { median_row_correlation: number; sign_agreement: number; top1_feature_agreement: number };
 }
 
-export const CAUSE_LABEL: Record<string, string> = {
+export interface HealthIssue {
+  code: string;
+  sensor: string;
+  severity: 'OK' | 'INFO' | 'WARNING' | 'CRITICAL';
+  what: string;
+  check: string;
+  twin: string;
+  count?: number;
+  last_seen_utc?: string;
+}
+
+export interface DeviceHealth {
+  site_id: string;
+  device_id: string;
+  collection: string;
+  n_readings: number;
+  from_utc: string;
+  to_utc: string;
+  latest: {
+    timestamp_utc: string;
+    record_id: string;
+    values: Record<string, number | null>;
+    health_status: string;
+    status_text: string;
+    worst_severity: string;
+    issues: HealthIssue[];
+    context: string;
+  };
+  status_counts: Record<string, number>;
+  issues: HealthIssue[];
+}
+
+export const CAUSE_LABEL: Partial<Record<string, string>> = {
   NORMAL: 'Working normally',
   SHORT_CIRCUIT: 'Wiring short',
   OPEN_CIRCUIT: 'Disconnected',
@@ -89,7 +121,7 @@ export const CAUSE_LABEL: Record<string, string> = {
   UNEXPLAINED_LOSS: 'Unclear power loss',
 };
 
-export const PRIORITY_LABEL: Record<string, string> = {
+export const PRIORITY_LABEL: Partial<Record<string, string>> = {
   CRITICAL: 'Urgent',
   HIGH: 'High',
   MEDIUM: 'Medium',
@@ -97,7 +129,7 @@ export const PRIORITY_LABEL: Record<string, string> = {
   INFO: 'Info',
 };
 
-export const FEATURE_LABEL: Record<string, string> = {
+export const FEATURE_LABEL: Partial<Record<string, string>> = {
   voltage_v: 'Voltage',
   current_ma: 'Current',
   power_mw: 'Power',
