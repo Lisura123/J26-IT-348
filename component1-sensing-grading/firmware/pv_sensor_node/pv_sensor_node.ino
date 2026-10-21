@@ -49,6 +49,36 @@
 #define R_TEMP1   0.00032673
 #define R_AMBIENT 0.000230931
 
+// ---------------- Stage 3 settings (same as src/panel_model.py + notebook 06) ----------------
+#define LUX_PER_WM2 120.0           // G (W/m2) = lux / 120
+#define TEMP_RISE_PER_WM2 0.03125   // NOCT: (45 - 20) / 800
+#define TEMP_RISE_BAD 20.0          // C above a healthy panel
+#define DUST_BAD 30.0               // % (DSM501B)
+
+// combined weights (50 % entropy + 50 % equal), from the site datasets (notebook 06)
+#define W_POWER   0.237
+#define W_VOLTAGE 0.175
+#define W_CURRENT 0.166
+#define W_TEMP    0.309
+#define W_DUST    0.113
+
+// expected current (mA) of a HEALTHY panel into my 120 ohm load
+// made with expected_current() in panel_model.py (pvlib single-diode model)
+#define N_LUX 19
+#define N_TEMP 6
+const float TABLE_LUX[N_LUX] = {0, 1000, 2500, 5000, 10000, 15000, 20000, 22500, 25000,
+                                27500, 30000, 32500, 35000, 40000, 50000, 60000, 80000,
+                                100000, 120000};
+const float TABLE_TEMP[N_TEMP] = {15, 25, 35, 45, 55, 65};
+const float TABLE_MA[N_TEMP][N_LUX] = {
+  {0.000, 1.825, 4.549, 9.050, 17.914, 26.595, 35.057, 38.946, 41.859, 43.610, 44.695, 45.445, 46.007, 46.821, 47.858, 48.538, 49.444, 50.060, 50.527},  // 15 C
+  {0.000, 1.834, 4.572, 9.096, 18.004, 26.727, 35.134, 38.641, 40.947, 42.336, 43.251, 43.915, 44.429, 45.195, 46.202, 46.877, 47.789, 48.414, 48.890},  // 25 C
+  {0.000, 1.844, 4.595, 9.141, 18.093, 26.855, 35.057, 38.008, 39.820, 40.963, 41.758, 42.356, 42.832, 43.560, 44.542, 45.212, 46.129, 46.763, 47.248},  // 35 C
+  {0.000, 1.853, 4.617, 9.187, 18.183, 26.972, 34.721, 37.094, 38.551, 39.521, 40.228, 40.776, 41.222, 41.916, 42.876, 43.543, 44.464, 45.108, 45.601},  // 45 C
+  {0.000, 1.862, 4.640, 9.232, 18.272, 27.060, 34.080, 35.974, 37.184, 38.030, 38.669, 39.178, 39.598, 40.265, 41.206, 41.869, 42.796, 43.448, 43.950},  // 55 C
+  {0.000, 1.871, 4.663, 9.277, 18.359, 27.076, 33.173, 34.715, 35.748, 36.502, 37.088, 37.564, 37.964, 38.607, 39.531, 40.191, 41.124, 41.784, 42.295},  // 65 C
+};
+
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
 OneWire oneWire(ONE_WIRE_PIN);
@@ -182,6 +212,74 @@ struct Kalman {
 };
 
 Kalman kfVoltage, kfCurrent, kfTemp1, kfAmbient;
+
+// =====================================================================
+// Stage 3: compare with a healthy panel (physics model) + weights
+// =====================================================================
+
+float clip01(float x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+
+int findIndex(const float* points, int n, float x) {
+  // index i so that points[i] <= x < points[i+1]
+  if (x <= points[0]) return 0;
+  for (int i = 0; i < n - 1; i++) {
+    if (x < points[i + 1]) return i;
+  }
+  return n - 2;
+}
+
+float expectedCurrent(float lux, float panelTemp) {
+  // bilinear interpolation in the table (light and temperature)
+  if (isnan(panelTemp)) panelTemp = 25.0;   // same as Python (nan -> 25 C)
+  if (lux < 0) lux = 0;
+  if (lux > TABLE_LUX[N_LUX - 1]) lux = TABLE_LUX[N_LUX - 1];
+  if (panelTemp < TABLE_TEMP[0]) panelTemp = TABLE_TEMP[0];
+  if (panelTemp > TABLE_TEMP[N_TEMP - 1]) panelTemp = TABLE_TEMP[N_TEMP - 1];
+
+  int li = findIndex(TABLE_LUX, N_LUX, lux);
+  int ti = findIndex(TABLE_TEMP, N_TEMP, panelTemp);
+  float fl = (lux - TABLE_LUX[li]) / (TABLE_LUX[li + 1] - TABLE_LUX[li]);
+  float ft = (panelTemp - TABLE_TEMP[ti]) / (TABLE_TEMP[ti + 1] - TABLE_TEMP[ti]);
+
+  float a = TABLE_MA[ti][li] * (1 - fl) + TABLE_MA[ti][li + 1] * fl;
+  float b = TABLE_MA[ti + 1][li] * (1 - fl) + TABLE_MA[ti + 1][li + 1] * fl;
+  return a * (1 - ft) + b * ft;
+}
+
+// Stage 3 results (used by Stage 4 next)
+float expI, expV;
+float powerRatio, voltageRatio, currentRatio, tempRise, dustLevel;
+float scoreTemp, scoreDust;
+float weightedScore;   // S, 0 - 100
+
+void runStage3(float voltage, float current, float power, float lux,
+               float surface, float ambient) {
+  // a healthy panel at the same light and temperature
+  expI = expectedCurrent(lux, surface);
+  if (expI < 0.1) expI = 0.1;                       // same as np.clip(.., 0.1)
+  expV = expI / 1000.0 * (LOAD_OHMS + SHUNT_OHMS);
+
+  // 1 = as good as a healthy panel
+  powerRatio   = clip01(power / (expI * expV));
+  voltageRatio = clip01(voltage / expV);
+  currentRatio = clip01(current / expI);
+
+  // temp rise ABOVE what a healthy panel gets in this sunlight
+  if (isnan(surface) || isnan(ambient)) tempRise = NAN;
+  else tempRise = surface - ambient - lux / LUX_PER_WM2 * TEMP_RISE_PER_WM2;
+
+  dustLevel = dustPercent >= 0 ? dustPercent : NAN;
+
+  // scores: 1 = good, 0 = bad
+  scoreTemp = isnan(tempRise) ? NAN : clip01((TEMP_RISE_BAD - tempRise) / TEMP_RISE_BAD);
+  scoreDust = isnan(dustLevel) ? NAN : clip01((DUST_BAD - dustLevel) / DUST_BAD);
+
+  // weighted score (a missing indicator is skipped, like pandas sum())
+  weightedScore = W_POWER * powerRatio + W_VOLTAGE * voltageRatio + W_CURRENT * currentRatio;
+  if (!isnan(scoreTemp)) weightedScore += W_TEMP * scoreTemp;
+  if (!isnan(scoreDust)) weightedScore += W_DUST * scoreDust;
+  weightedScore *= 100.0;
+}
 
 // =====================================================================
 // WiFi and time
@@ -398,7 +496,7 @@ void setup() {
 
   Serial.println();
   Serial.println("=============================================");
-  Serial.println("  PV sensor node - Member 1 (Stage 1 + 2)");
+  Serial.println("  PV sensor node - Member 1 (Stage 1 + 2 + 3)");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -498,6 +596,9 @@ void loop() {
   float ambient = kfAmbient.update(rawAmbient, ambientOk);
   float power = voltage * current;   // power again, from the filtered values
 
+  // ---------------- Stage 3: indicators + weighted score ----------------
+  runStage3(voltage, current, power, lux, surface, ambient);
+
   // ---------------- send to the backend ----------------
   if (haveTime) {
     addToBatch(recordId, timeText, voltage, current, power, lux, surface, ambient);
@@ -519,4 +620,12 @@ void loop() {
   if (dustPercent < 0) Serial.print("warming up"); else { Serial.print(dustPercent, 2); Serial.print(" %"); }
   Serial.print(" | Relay: ");    Serial.print(relayOn ? "ON" : "OFF");
   Serial.print(" | Flag: ");     Serial.println(qualityFlag);
+
+  Serial.print("   Stage 3: expected I ");   Serial.print(expI, 2);
+  Serial.print(" mA | ratios P/V/I ");       Serial.print(powerRatio, 2);
+  Serial.print(" / ");                       Serial.print(voltageRatio, 2);
+  Serial.print(" / ");                       Serial.print(currentRatio, 2);
+  Serial.print(" | temp rise ");
+  if (isnan(tempRise)) Serial.print("--"); else Serial.print(tempRise, 2);
+  Serial.print(" C | S = ");                 Serial.println(weightedScore, 1);
 }
