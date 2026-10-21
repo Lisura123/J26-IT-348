@@ -80,7 +80,7 @@ const float TABLE_MA[N_TEMP][N_LUX] = {
 };
 
 // ---------------- Stage 4 settings (same as src/fuzzy_logic.py) ----------------
-#define MIN_GRADING_LUX 1000.0   // below this the panel gives < 2 mA: just sensor noise
+#define MIN_GRADING_LUX 500.0    // below this the panel gives < 1 mA: just sensor noise (same as Python)
 #define HEALTHY_FROM 70.0
 #define DEGRADED_FROM 40.0
 
@@ -102,6 +102,10 @@ float dustPercent = -1;   // -1 = not ready yet
 unsigned long lastRead = 0;
 bool relayOn = false;
 unsigned long relayChangedAt = 0;
+
+// test mode: grade indoors too (my light sensor stops at ~650 lux)
+// readings in test mode get the flag TEST_MODE, so they can be removed later
+bool testMode = false;
 
 // SD card
 bool sdOk = false;
@@ -340,7 +344,9 @@ char healthStatus[12];
 const char* notGradedReason = "";
 
 void runStage4(float lux) {
-  if (lux < MIN_GRADING_LUX) {
+  float minLux = testMode ? 0.0 : MIN_GRADING_LUX;
+
+  if (lux < minLux) {
     healthScore = NAN;
     notGradedReason = "low light";
   } else if (isnan(scoreDust)) {
@@ -352,10 +358,10 @@ void runStage4(float lux) {
     notGradedReason = "";
   }
 
-  if (isnan(healthScore))             strcpy(healthStatus, "NOT_GRADED");
+  if (isnan(healthScore))                strcpy(healthStatus, "NOT_GRADED");
   else if (healthScore >= HEALTHY_FROM)  strcpy(healthStatus, "HEALTHY");
   else if (healthScore >= DEGRADED_FROM) strcpy(healthStatus, "DEGRADED");
-  else                                strcpy(healthStatus, "FAULTY");
+  else                                   strcpy(healthStatus, "FAULTY");
 }
 
 // =====================================================================
@@ -576,6 +582,7 @@ void setup() {
   Serial.println();
   Serial.println("=============================================");
   Serial.println("  PV sensor node - Member 1 (full pipeline)");
+  Serial.println("  Serial: 1 = relay ON, 0 = relay OFF, t = test mode");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -594,6 +601,11 @@ void loop() {
     char c = Serial.read();
     if (c == '1') setRelay(true);
     else if (c == '0') setRelay(false);
+    else if (c == 't') {
+      testMode = !testMode;
+      Serial.println(testMode ? ">> TEST MODE ON - grading also below 500 lux (flag TEST_MODE)"
+                              : ">> TEST MODE OFF - normal grading");
+    }
   }
 
   // dust: every 30 s (windows that start in the warm-up are not used)
@@ -667,6 +679,9 @@ void loop() {
     addFlag("LOAD_SHORTED");
     voltage = current / 1000.0 * SHORT_PATH_OHMS;
   }
+
+  // mark test readings, so the backend data can be cleaned later
+  if (testMode) addFlag("TEST_MODE");
 
   // ---------------- Stage 2: Kalman filter ----------------
   voltage = kfVoltage.update(voltage, true);
