@@ -33,7 +33,7 @@
 #define RELAY_SETTLE_MS 500   // power dips for a moment when the relay switches
 
 #define BATCH_SIZE 15         // send 15 readings (30 s) in one request
-#define JSON_LINE_MAX 420
+#define JSON_LINE_MAX 460
 
 // ---------------- Stage 1 settings (same as src/data_quality.py) ----------------
 #define SIGN_WINDOW 31        // last 31 readings (~1 min) for the wire-reversed check
@@ -78,6 +78,11 @@ const float TABLE_MA[N_TEMP][N_LUX] = {
   {0.000, 1.862, 4.640, 9.232, 18.272, 27.060, 34.080, 35.974, 37.184, 38.030, 38.669, 39.178, 39.598, 40.265, 41.206, 41.869, 42.796, 43.448, 43.950},  // 55 C
   {0.000, 1.871, 4.663, 9.277, 18.359, 27.076, 33.173, 34.715, 35.748, 36.502, 37.088, 37.564, 37.964, 38.607, 39.531, 40.191, 41.124, 41.784, 42.295},  // 65 C
 };
+
+// ---------------- Stage 4 settings (same as src/fuzzy_logic.py) ----------------
+#define MIN_GRADING_LUX 1000.0   // below this the panel gives < 2 mA: just sensor noise
+#define HEALTHY_FROM 70.0
+#define DEGRADED_FROM 40.0
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
@@ -246,7 +251,7 @@ float expectedCurrent(float lux, float panelTemp) {
   return a * (1 - ft) + b * ft;
 }
 
-// Stage 3 results (used by Stage 4 next)
+// Stage 3 results
 float expI, expV;
 float powerRatio, voltageRatio, currentRatio, tempRise, dustLevel;
 float scoreTemp, scoreDust;
@@ -279,6 +284,78 @@ void runStage3(float voltage, float current, float power, float lux,
   if (!isnan(scoreTemp)) weightedScore += W_TEMP * scoreTemp;
   if (!isnan(scoreDust)) weightedScore += W_DUST * scoreDust;
   weightedScore *= 100.0;
+}
+
+// =====================================================================
+// Stage 4: fuzzy logic (same rules as src/fuzzy_logic.py)
+// =====================================================================
+
+float trap(float x, float a, float b, float c, float d) {
+  // trapezoid: 0 before a, rises a->b, 1 from b to c, falls c->d
+  if (isnan(x)) return 0;
+  if (x >= b && x <= c) return 1;
+  if (b > a && x >= a && x < b) return (x - a) / (b - a);
+  if (d > c && x > c && x <= d) return (d - x) / (d - c);
+  return 0;
+}
+
+float tri(float x, float a, float b, float c) { return trap(x, a, b, b, c); }
+
+float fuzzyGrade(float S, float E, float T, float D) {
+  // ---- fuzzify ----
+  float sLow = trap(S, 0, 0, 30, 50), sMed = tri(S, 30, 55, 80), sHigh = trap(S, 65, 85, 100, 100);
+  float eBad = trap(E, 0, 0, 0.3, 0.5), eOk = tri(E, 0.3, 0.6, 0.85), eGood = trap(E, 0.7, 0.9, 1, 1);
+  float tHot = trap(T, 0, 0, 0.25, 0.5), tNormal = trap(T, 0.25, 0.5, 1, 1);
+  float dDirty = trap(D, 0, 0, 0.4, 0.6), dClean = trap(D, 0.4, 0.6, 1, 1);
+
+  // ---- rules (AND = min) ----
+  float r1 = eBad;                                          // R1 -> FAULTY
+  float r2 = tHot;                                          // R2 -> FAULTY
+  float r3 = fminf(sLow, 1 - eGood);                        // R3 -> FAULTY
+  float r4 = fminf(sMed, 1 - eBad);                         // R4 -> DEGRADED
+  float r5 = fminf(dDirty, 1 - eBad);                       // R5 -> DEGRADED
+  float r6 = eOk;                                           // R6 -> DEGRADED
+  float r7 = fminf(fminf(sHigh, eGood), fminf(tNormal, dClean));   // R7 -> HEALTHY
+
+  // ---- combine rules of the same output (OR = max) ----
+  float faulty = fmaxf(r1, fmaxf(r2, r3));
+  float degraded = fmaxf(r4, fmaxf(r5, r6));
+  float healthy = r7;
+
+  // ---- defuzzify (centroid over 0..100) ----
+  float sumMu = 0, sumMuY = 0;
+  for (int y = 0; y <= 100; y++) {
+    float mu = fmaxf(fminf(faulty, trap(y, 0, 0, 20, 40)),
+               fmaxf(fminf(degraded, tri(y, 30, 50, 70)),
+                     fminf(healthy, trap(y, 60, 80, 100, 100))));
+    sumMu += mu;
+    sumMuY += mu * y;
+  }
+  return sumMu > 1e-6 ? sumMuY / sumMu : S;
+}
+
+// Stage 4 results
+float healthScore;          // NAN = not graded
+char healthStatus[12];
+const char* notGradedReason = "";
+
+void runStage4(float lux) {
+  if (lux < MIN_GRADING_LUX) {
+    healthScore = NAN;
+    notGradedReason = "low light";
+  } else if (isnan(scoreDust)) {
+    healthScore = NAN;
+    notGradedReason = "dust sensor warming up";
+  } else {
+    float E = fminf(voltageRatio, currentRatio);   // electrical part
+    healthScore = fuzzyGrade(weightedScore, E, scoreTemp, scoreDust);
+    notGradedReason = "";
+  }
+
+  if (isnan(healthScore))             strcpy(healthStatus, "NOT_GRADED");
+  else if (healthScore >= HEALTHY_FROM)  strcpy(healthStatus, "HEALTHY");
+  else if (healthScore >= DEGRADED_FROM) strcpy(healthStatus, "DEGRADED");
+  else                                strcpy(healthStatus, "FAULTY");
 }
 
 // =====================================================================
@@ -395,7 +472,7 @@ void saveToSD(const char* recordId, const char* timeText, float voltage, float c
 }
 
 // =====================================================================
-// backend (FILTERED readings + quality_flag)
+// backend (FILTERED readings + quality_flag + health_score + health_status)
 // =====================================================================
 
 void addToBatch(const char* recordId, const char* timeText, float voltage, float current,
@@ -404,12 +481,14 @@ void addToBatch(const char* recordId, const char* timeText, float voltage, float
   char* p = batch[batchCount];
   int n = snprintf(p, JSON_LINE_MAX,
     "{\"timestamp_utc\":\"%s\",\"record_id\":\"%s\",\"site_id\":\"%s\",\"device_id\":\"%s\","
-    "\"quality_flag\":\"%s\",\"voltage_v\":%.4f,\"current_ma\":%.2f,\"power_mw\":%.4f,"
-    "\"irradiance_lux\":%.1f",
-    timeText, recordId, SITE_ID, DEVICE_ID, qualityFlag, voltage, current, power, lux);
-  if (!isnan(surface))  n += snprintf(p + n, JSON_LINE_MAX - n, ",\"panel_temp1_c\":%.4f", surface);
-  if (!isnan(ambient))  n += snprintf(p + n, JSON_LINE_MAX - n, ",\"ambient_temp_c\":%.4f", ambient);
-  if (dustPercent >= 0) n += snprintf(p + n, JSON_LINE_MAX - n, ",\"dust_lpo_pct\":%.2f", dustPercent);
+    "\"quality_flag\":\"%s\",\"health_status\":\"%s\",\"voltage_v\":%.4f,\"current_ma\":%.2f,"
+    "\"power_mw\":%.4f,\"irradiance_lux\":%.1f",
+    timeText, recordId, SITE_ID, DEVICE_ID, qualityFlag, healthStatus,
+    voltage, current, power, lux);
+  if (!isnan(surface))     n += snprintf(p + n, JSON_LINE_MAX - n, ",\"panel_temp1_c\":%.4f", surface);
+  if (!isnan(ambient))     n += snprintf(p + n, JSON_LINE_MAX - n, ",\"ambient_temp_c\":%.4f", ambient);
+  if (dustPercent >= 0)    n += snprintf(p + n, JSON_LINE_MAX - n, ",\"dust_lpo_pct\":%.2f", dustPercent);
+  if (!isnan(healthScore)) n += snprintf(p + n, JSON_LINE_MAX - n, ",\"health_score\":%.2f", healthScore);
   snprintf(p + n, JSON_LINE_MAX - n, "}");
   batchCount++;
 }
@@ -496,7 +575,7 @@ void setup() {
 
   Serial.println();
   Serial.println("=============================================");
-  Serial.println("  PV sensor node - Member 1 (Stage 1 + 2 + 3)");
+  Serial.println("  PV sensor node - Member 1 (full pipeline)");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -599,6 +678,9 @@ void loop() {
   // ---------------- Stage 3: indicators + weighted score ----------------
   runStage3(voltage, current, power, lux, surface, ambient);
 
+  // ---------------- Stage 4: fuzzy grade ----------------
+  runStage4(lux);
+
   // ---------------- send to the backend ----------------
   if (haveTime) {
     addToBatch(recordId, timeText, voltage, current, power, lux, surface, ambient);
@@ -621,11 +703,19 @@ void loop() {
   Serial.print(" | Relay: ");    Serial.print(relayOn ? "ON" : "OFF");
   Serial.print(" | Flag: ");     Serial.println(qualityFlag);
 
-  Serial.print("   Stage 3: expected I ");   Serial.print(expI, 2);
-  Serial.print(" mA | ratios P/V/I ");       Serial.print(powerRatio, 2);
-  Serial.print(" / ");                       Serial.print(voltageRatio, 2);
-  Serial.print(" / ");                       Serial.print(currentRatio, 2);
-  Serial.print(" | temp rise ");
-  if (isnan(tempRise)) Serial.print("--"); else Serial.print(tempRise, 2);
-  Serial.print(" C | S = ");                 Serial.println(weightedScore, 1);
+  Serial.print("   Stage 3: ratios P/V/I ");  Serial.print(powerRatio, 2);
+  Serial.print(" / ");                        Serial.print(voltageRatio, 2);
+  Serial.print(" / ");                        Serial.print(currentRatio, 2);
+  Serial.print(" | S = ");                    Serial.print(weightedScore, 1);
+  Serial.print("   Stage 4: ");
+  if (isnan(healthScore)) {
+    Serial.print("NOT_GRADED (");
+    Serial.print(notGradedReason);
+    Serial.println(")");
+  } else {
+    Serial.print("health ");
+    Serial.print(healthScore, 1);
+    Serial.print(" -> ");
+    Serial.println(healthStatus);
+  }
 }
