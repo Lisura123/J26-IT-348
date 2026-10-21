@@ -17,12 +17,14 @@
 #define SD_SCK_PIN 17
 #define SD_MISO_PIN 16
 #define SD_MOSI_PIN 23
+#define SD_SPEED 1000000      // 1 MHz: slow but safe with jumper wires
 
 #define READ_EVERY_MS 2000    // fast, so the demo reacts quickly
 #define DUST_WINDOW_MS 30000  // DSM501B needs about 30 s to measure
 #define DUST_WARMUP_MS 60000  // and about 1 min to warm up
 #define LOAD_OHMS 120.0       // panel(-) is isolated, so V = I x R
 #define TEMP_MISSING -127.0   // same sentinel as the datasets
+#define RELAY_SETTLE_MS 500   // power dips for a moment when the relay switches
 
 Adafruit_INA219 ina219;
 Adafruit_ADS1115 ads;
@@ -41,6 +43,7 @@ float dustPercent = -1;   // -1 = not ready yet
 
 unsigned long lastRead = 0;
 bool relayOn = false;
+unsigned long relayChangedAt = 0;   // no SD write just after the relay switches
 
 // SD card
 bool sdOk = false;
@@ -58,7 +61,7 @@ void IRAM_ATTR dustChanged() {
 
 void startSD() {
   SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-  if (!SD.begin(SD_CS_PIN, SPI, 4000000)) {
+  if (!SD.begin(SD_CS_PIN, SPI, SD_SPEED)) {
     Serial.println("ERROR: SD card not found (readings only on Serial)");
     return;
   }
@@ -92,29 +95,37 @@ void saveToSD(float voltage, float current, float power, float lux,
               float surface, float ambient) {
   if (!sdOk) return;
 
+  // the relay coil makes the power dip for a moment: wait before writing
+  unsigned long sinceRelay = millis() - relayChangedAt;
+  if (sinceRelay < RELAY_SETTLE_MS) delay(RELAY_SETTLE_MS - sinceRelay);
+
+  // build the whole line first, then write it in one go
+  char dust[12] = "";   // missing = empty, never 0
+  if (dustPercent >= 0) snprintf(dust, sizeof(dust), "%.2f", dustPercent);
+
+  char line[200];
+  snprintf(line, sizeof(line),
+           "M1-DEV-%03d-%07lu,%.1f,%.4f,%.2f,%.4f,%.4f,%.4f,%.1f,%s,1,%d",
+           bootNumber, readingNumber, millis() / 1000.0,
+           voltage, current, power, surface, ambient, lux,
+           dust, relayOn ? 1 : 0);
+
   // open, add one line, close: nothing is lost if the power goes off
   File f = SD.open(logFile, FILE_APPEND);
   if (!f) {
     Serial.println("ERROR: SD write failed");
     return;
   }
-
-  char recordId[24];
-  sprintf(recordId, "M1-DEV-%03d-%07lu", bootNumber, readingNumber);
-
-  f.print(recordId);              f.print(",");
-  f.print(millis() / 1000.0, 1);  f.print(",");
-  f.print(voltage, 4);            f.print(",");
-  f.print(current, 2);            f.print(",");
-  f.print(power, 4);              f.print(",");
-  f.print(surface, 4);            f.print(",");
-  f.print(ambient, 4);            f.print(",");
-  f.print(lux, 1);                f.print(",");
-  if (dustPercent >= 0) f.print(dustPercent, 2);   // missing = empty, never 0
-  f.print(",");
-  f.print("1");                   f.print(",");    // voltage_calculated = yes
-  f.println(relayOn ? "1" : "0");
+  f.println(line);
   f.close();
+}
+
+void setRelay(bool on) {
+  // low trigger: LOW = ON = panel cut, HIGH = OFF = panel connected
+  digitalWrite(RELAY_PIN, on ? LOW : HIGH);
+  relayOn = on;
+  relayChangedAt = millis();
+  Serial.println(on ? ">> Relay ON - panel cut" : ">> Relay OFF - panel connected");
 }
 
 void setup() {
@@ -150,15 +161,8 @@ void loop() {
   // relay control from Serial Monitor
   if (Serial.available()) {
     char c = Serial.read();
-    if (c == '1') {
-      digitalWrite(RELAY_PIN, LOW);
-      relayOn = true;
-      Serial.println(">> Relay ON - panel cut");
-    } else if (c == '0') {
-      digitalWrite(RELAY_PIN, HIGH);
-      relayOn = false;
-      Serial.println(">> Relay OFF - panel connected");
-    }
+    if (c == '1') setRelay(true);
+    else if (c == '0') setRelay(false);
   }
 
   // dust: every 30 s (windows that start in the warm-up are not used)
