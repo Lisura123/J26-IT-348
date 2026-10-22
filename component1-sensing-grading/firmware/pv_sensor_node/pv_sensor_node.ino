@@ -601,7 +601,7 @@ void setup() {
   Serial.println("=============================================");
   Serial.println("  PV sensor node - Member 1 (full pipeline)");
   Serial.println("  Serial: 1 = relay ON, 0 = relay OFF, t = test mode");
-  Serial.println("  Label : n = NORMAL, d = DUST, s = PARTIAL_SHADING, u = UNLABELED");
+  Serial.println("  Label : n = NORMAL, d = DUST, s = PARTIAL_SHADING, x = SHORT_CIRCUIT, u = UNLABELED");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -628,6 +628,7 @@ void loop() {
     else if (c == 'n') setLabel("NORMAL");
     else if (c == 'd') setLabel("DUST");
     else if (c == 's') setLabel("PARTIAL_SHADING");
+    else if (c == 'x') setLabel("SHORT_CIRCUIT");
     else if (c == 'u') setLabel("UNLABELED");
   }
 
