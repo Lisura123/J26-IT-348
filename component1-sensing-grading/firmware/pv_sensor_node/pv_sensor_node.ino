@@ -107,6 +107,11 @@ unsigned long relayChangedAt = 0;
 // readings in test mode get the flag TEST_MODE, so they can be removed later
 bool testMode = false;
 
+// label = what I really did in the test (the TRUE condition), set from the Serial Monitor
+// it is only used later to CHECK the grade, never to make it
+// relay ON is always OPEN_CIRCUIT (I cut the panel myself)
+char testLabel[20] = "UNLABELED";
+
 // SD card
 bool sdOk = false;
 String logFile;
@@ -419,7 +424,7 @@ bool nowUtc(char* out, size_t size) {
 }
 
 // =====================================================================
-// SD card (RAW readings, so Python can run the same pipeline later)
+// SD card (RAW readings + the grade + the test label)
 // =====================================================================
 
 void startSD() {
@@ -445,7 +450,8 @@ void startSD() {
     return;
   }
   f.println("record_id,timestamp_utc,uptime_s,voltage_v,current_ma,power_mw,panel_temp1_c,"
-            "ambient_temp_c,irradiance_lux,dust_lpo_pct,voltage_calculated,relay_on");
+            "ambient_temp_c,irradiance_lux,dust_lpo_pct,voltage_calculated,relay_on,"
+            "health_score,label");
   f.close();
 
   sdOk = true;
@@ -454,19 +460,24 @@ void startSD() {
 }
 
 void saveToSD(const char* recordId, const char* timeText, float voltage, float current,
-              float power, float lux, float surface, float ambient) {
+              float power, float lux, float surface, float ambient,
+              float score, const char* label) {
   if (!sdOk) return;
 
   unsigned long sinceRelay = millis() - relayChangedAt;
   if (sinceRelay < RELAY_SETTLE_MS) delay(RELAY_SETTLE_MS - sinceRelay);
 
-  char dust[12] = "";   // missing = empty, never 0
+  char dust[12] = "";    // missing = empty, never 0
   if (dustPercent >= 0) snprintf(dust, sizeof(dust), "%.2f", dustPercent);
 
-  char line[220];
-  snprintf(line, sizeof(line), "%s,%s,%.1f,%.4f,%.2f,%.4f,%.4f,%.4f,%.1f,%s,1,%d",
+  char scoreText[12] = "";   // NOT_GRADED = empty, never 0
+  if (!isnan(score)) snprintf(scoreText, sizeof(scoreText), "%.2f", score);
+
+  char line[260];
+  snprintf(line, sizeof(line), "%s,%s,%.1f,%.4f,%.2f,%.4f,%.4f,%.4f,%.1f,%s,1,%d,%s,%s",
            recordId, timeText, millis() / 1000.0,
-           voltage, current, power, surface, ambient, lux, dust, relayOn ? 1 : 0);
+           voltage, current, power, surface, ambient, lux, dust, relayOn ? 1 : 0,
+           scoreText, label);
 
   File f = SD.open(logFile, FILE_APPEND);
   if (!f) {
@@ -534,7 +545,7 @@ void sendBatch() {
 }
 
 // =====================================================================
-// relay
+// relay and test label
 // =====================================================================
 
 void setRelay(bool on) {
@@ -543,6 +554,13 @@ void setRelay(bool on) {
   relayOn = on;
   relayChangedAt = millis();
   Serial.println(on ? ">> Relay ON - panel cut" : ">> Relay OFF - panel connected");
+}
+
+void setLabel(const char* name) {
+  strncpy(testLabel, name, sizeof(testLabel) - 1);
+  testLabel[sizeof(testLabel) - 1] = '\0';
+  Serial.print(">> Test label: ");
+  Serial.println(testLabel);
 }
 
 // =====================================================================
@@ -583,6 +601,7 @@ void setup() {
   Serial.println("=============================================");
   Serial.println("  PV sensor node - Member 1 (full pipeline)");
   Serial.println("  Serial: 1 = relay ON, 0 = relay OFF, t = test mode");
+  Serial.println("  Label : n = NORMAL, d = DUST, s = PARTIAL_SHADING, u = UNLABELED");
   Serial.println("=============================================");
   startSD();
   startWiFi();
@@ -606,6 +625,10 @@ void loop() {
       Serial.println(testMode ? ">> TEST MODE ON - grading also below 500 lux (flag TEST_MODE)"
                               : ">> TEST MODE OFF - normal grading");
     }
+    else if (c == 'n') setLabel("NORMAL");
+    else if (c == 'd') setLabel("DUST");
+    else if (c == 's') setLabel("PARTIAL_SHADING");
+    else if (c == 'u') setLabel("UNLABELED");
   }
 
   // dust: every 30 s (windows that start in the warm-up are not used)
@@ -643,9 +666,6 @@ void loop() {
   sprintf(recordId, "M1-DEV-%03d-%07lu", bootNumber, readingNumber);
   char timeText[24] = "";
   bool haveTime = nowUtc(timeText, sizeof(timeText));
-
-  // SD gets the RAW reading
-  saveToSD(recordId, timeText, rawVoltage, rawCurrent, rawPower, rawLux, rawSurface, rawAmbient);
 
   // ---------------- Stage 1: data quality ----------------
   strcpy(qualityFlag, "OK");
@@ -696,6 +716,11 @@ void loop() {
   // ---------------- Stage 4: fuzzy grade ----------------
   runStage4(lux);
 
+  // ---------------- SD card: RAW reading + grade + label ----------------
+  const char* label = relayOn ? "OPEN_CIRCUIT" : testLabel;   // relay ON = I cut the panel
+  saveToSD(recordId, timeText, rawVoltage, rawCurrent, rawPower, rawLux, rawSurface, rawAmbient,
+           healthScore, label);
+
   // ---------------- send to the backend ----------------
   if (haveTime) {
     addToBatch(recordId, timeText, voltage, current, power, lux, surface, ambient);
@@ -715,6 +740,7 @@ void loop() {
   Serial.print(" C | Dust: ");
   if (dustPercent < 0) Serial.print("warming up"); else { Serial.print(dustPercent, 2); Serial.print(" %"); }
   Serial.print(" | Relay: ");    Serial.print(relayOn ? "ON" : "OFF");
+  Serial.print(" | Label: ");    Serial.print(label);
   Serial.println(" | ");
 
   // line 2: the pipeline (Stage 1 flag, Kalman, Stage 3, Stage 4)
