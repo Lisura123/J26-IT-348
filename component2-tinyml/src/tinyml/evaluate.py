@@ -14,12 +14,24 @@ from .features import STATUS_OK
 SAFETY_CLASSES = ("OPEN_CIRCUIT", "SHORT_CIRCUIT")
 
 
+# [GUIDE] F. ALL classification metrics are calculated in this one function.
+# Three kinds of results use it, and they must not be confused:
+#   1. 5-fold CV (experiment.run_comparison): model selection, TRAINING window only
+#      -> results/baselines_phase7.md (MLP macro-F1 0.981)
+#   2. training-fit accuracy (train.train_final): the model predicting its own training
+#      rows -> 1.0; a fit check, NOT a performance claim
+#   3. final OPERATION test (holdout.run_evaluation): frozen model, unseen 50 %, run once
+#      -> results/operation_eval.md (accuracy 0.979, macro-F1 0.978)
+# INPUT: true labels and predicted labels.  OUTPUT: dict of metrics.
 def classification_metrics(y_true, y_pred):
     """Macro-F1 (primary), balanced accuracy, accuracy, per-class precision /
     recall / F1 / support and the confusion matrix (rows = true, LABELS order).
     Classes absent from y_true get recall None and are excluded from macro-F1."""
     y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
     present = [l for l in LABELS if (y_true == l).any()]
+    # Precision = of the readings predicted as class C, how many really are C (false alarms).
+    # Recall    = of the readings that really are C, how many were found (missed faults).
+    # F1        = one number combining precision and recall for each class.
     p, r, f, s = precision_recall_fscore_support(y_true, y_pred, labels=list(LABELS), zero_division=0)
     per_class = {}
     for i, l in enumerate(LABELS):
@@ -28,14 +40,18 @@ def classification_metrics(y_true, y_pred):
                         "f1": float(f[i]) if has else None, "support": int(s[i])}
     return {
         "n": int(len(y_true)),
+        # [GUIDE] F. Macro-F1 (the primary metric): the F1 of every class present, averaged
+        # equally, so rare fault classes count as much as NORMAL.
         "macro_f1": float(f1_score(y_true, y_pred, labels=present, average="macro", zero_division=0)),
         # mean recall over the classes present in y_true (same as balanced accuracy,
         # without sklearn's warning when a fold predicts a class it does not contain)
         "balanced_accuracy": float(np.mean([per_class[l]["recall"] for l in present])) if present else None,
+        # [GUIDE] F. Accuracy: share of all classified readings with the correct label.
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "classes_present": present,
         "per_class": per_class,
         "safety_recall": {l: per_class[l]["recall"] for l in SAFETY_CLASSES},
+        # [GUIDE] F. Confusion matrix: rows = true class, columns = predicted class, LABELS order.
         "confusion_matrix": confusion_matrix(y_true, y_pred, labels=list(LABELS)).tolist(),
     }
 

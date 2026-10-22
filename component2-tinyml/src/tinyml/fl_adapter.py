@@ -88,6 +88,10 @@ def check_weights(weights, max_abs=MAX_ABS_WEIGHT):
     return vec
 
 
+# [GUIDE] H. Federated learning: a site sends only the CHANGE of its weights
+# (local - base, 229 values), never its raw data. Same convention as Member 3's train_local.
+# STATUS: Member 2-side adapters are host-tested only; no end-to-end FL round with
+# Member 3's server has run (docs/FL_INTEGRATION.md).
 def compute_delta(local_weights, base_weights):
     """Flattened local - base (Member 3's train_local convention: new - old)."""
     return check_weights(local_weights) - check_weights(base_weights)
@@ -106,6 +110,8 @@ def update_sha256(update):
     return hashlib.sha256(_canonical(body)).hexdigest()
 
 
+# [GUIDE] H. Packs the 229-value delta (int8 + scale) with compatibility metadata
+# (feature version, feature-config SHA-256, activation, label order) in Member 3's update format.
 def build_update(*, local_weights, base_contract, base_contract_sha256, base_model_version, update_id, round_id,
                  site_id, device_id, num_samples, class_counts):
     """A local update in Member 3's fl_weight_updates.jsonl format (update_id,

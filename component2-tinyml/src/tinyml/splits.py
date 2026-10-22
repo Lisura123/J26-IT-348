@@ -36,6 +36,19 @@ def run_table(df):
     return runs.sort_index()
 
 
+# [GUIDE] B. Dataset splitting: where the 50/50 division comes from
+# WHAT: gives every run (run_id) a 5-fold CV fold, a temporal side and a LOSO fold.
+# IMPORTANT: there is NO random `train_test_split(test_size=0.5)` anywhere in this code.
+#       The dataset itself already has a `window` column: 3,000 TRAINING readings
+#       (50 runs, 1-9 Sept) and 3,000 OPERATION readings (50 runs, 10-15 Sept).
+#       This function only KEEPS those two windows (lines with runs["temporal"] below),
+#       so the train/test sizes are 3,000 / 3,000 = 50 % / 50 % because of the data,
+#       not because 50/50 was chosen as the best ratio.
+# HOW THE COUNTS ARE VERIFIED: results/split_summary.md (temporal: 3000 train / 3000 test
+#       rows, 10 runs per class on each side); holdout.EXPECTED_ROWS = 3000 and
+#       EXPECTED_RUNS = 50 are checked again before the final test (holdout.run_evaluation).
+# INPUT: the full DataFrame.  OUTPUT: one row per run with cv_fold, temporal, loso_fold.
+# EVIDENCE: results/splits_runwise_v1.json, results/split_summary.md.
 def make_assignments(df, n_splits=DEFAULT_FOLDS, seed=DEFAULT_SEED, cv_window="TRAINING"):
     """Assign every run to a CV fold, a temporal partition and a LOSO fold.
 
@@ -49,15 +62,27 @@ def make_assignments(df, n_splits=DEFAULT_FOLDS, seed=DEFAULT_SEED, cv_window="T
         raise ValueError(f"need >= {n_splits} {cv_window} runs per class for {n_splits}-fold CV, "
                          f"got {per_class.to_dict()}")
     runs["cv_fold"] = -1
+    # [GUIDE] B. Run-wise 5-fold cross-validation (model selection, TRAINING window only)
+    # WHY:  one train/test split gives one noisy number. 5 folds give 5 estimates, so models
+    #       can be compared fairly without ever touching the OPERATION test data.
+    # HOW:  the folds are made over RUNS, not rows (cv_runs has one row per run), stratified
+    #       by label: each fold tests 2 runs per class (600 readings) and trains on 8 runs per class.
+    # WHY RUNS: readings of one run are 5 s apart and nearly identical; if some went to train
+    #       and some to validation, the model would be tested on near-copies of its training data.
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     for fold, (_, test) in enumerate(skf.split(cv_runs.index, cv_runs.label)):
         runs.loc[cv_runs.index[test], "cv_fold"] = fold
+    # [GUIDE] B. THIS is the 50/50 line: TRAINING window -> "train", OPERATION window -> "test".
+    # The split follows the dataset's own time windows; nothing is shuffled or resampled here.
     runs["temporal"] = np.where(runs.window == "TRAINING", "train",
                                 np.where(runs.window == "OPERATION", "test", "unused"))
     runs["loso_fold"] = runs.site_id
     return runs
 
 
+# [GUIDE] B. Turns the saved assignments into (train rows, test rows) for one protocol
+# ("cv" = 5 folds, "temporal" = TRAINING->OPERATION, "loso" = leave one site out).
+# Every split passes through _checked(), which stops if a run is on both sides.
 def iter_folds(df, assignments, protocol):
     """Yield (fold_name, train_row_index, test_row_index) for one protocol.
 
@@ -83,6 +108,7 @@ def iter_folds(df, assignments, protocol):
                            df.index[a.loso_fold == site])
 
 
+# [GUIDE] B. Leakage guard: raises an error if any run_id is in both train and test.
 def _checked(df, name, train_idx, test_idx):
     shared = set(df.loc[train_idx, GROUP_COLUMN]) & set(df.loc[test_idx, GROUP_COLUMN])
     if shared:

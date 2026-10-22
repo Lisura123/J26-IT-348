@@ -23,6 +23,9 @@ MODEL_NAMES = ("rules", "logreg", "tree", "forest", "mlp")
 STOCHASTIC = ("forest", "mlp")          # results depend on the seed
 
 
+# [GUIDE] D. Baseline 1: threshold rules ("is machine learning needed at all?")
+# One learned threshold per fault on one feature. Result: macro-F1 0.920 (5-fold CV),
+# 3-6 points below the ML models (results/baselines_phase7.md, docs/PHASE7_RESULTS.md).
 class ThresholdRules:
     """One threshold per fault, checked in a fixed order:
 
@@ -80,6 +83,16 @@ def is_applicable(name, feature_names):
     return True
 
 
+# [GUIDE] D. ML algorithm selection: ALL five candidate models are created here
+#   rules  -> ThresholdRules            logreg -> LogisticRegression
+#   tree   -> DecisionTreeClassifier    forest -> RandomForestClassifier
+#   mlp    -> MLPClassifier (8-16-5, tanh)  <- the selected deployment model
+# Phase 7 result, physics8 features, pooled macro-F1 (5-fold CV): MLP 0.981,
+# logistic regression 0.982, random forest 0.975, rules 0.920, decision tree 0.896.
+# WHY MLP (docs/PHASE7_RESULTS.md, decision 2): its macro-F1 is competitive (within 0.001
+# of logistic regression, NOT better), it is compact (229 parameters, fits the ESP32),
+# and its 8-16-5 layout matches Member 3's planned federated learning model.
+# Logistic regression stays as the reported baseline.
 def make_model(name, seed=0, feature_names=None):
     if name == "rules":
         return ThresholdRules(feature_names)
@@ -89,6 +102,9 @@ def make_model(name, seed=0, feature_names=None):
         return DecisionTreeClassifier(max_depth=4, random_state=seed)
     if name == "forest":
         return RandomForestClassifier(n_estimators=20, max_depth=6, random_state=seed)
+    # [GUIDE] E. THE MLP IS DEFINED HERE: 8 inputs -> 16 hidden neurons (tanh) -> 5 outputs (softmax).
+    # 8*16 + 16 + 16*5 + 5 = 229 learned parameters. solver adam, max 2,000 iterations,
+    # random_state = seed (the final model uses seed 0, see train.FINAL_SEED_POLICY).
     if name == "mlp":
         return MLPClassifier(hidden_layer_sizes=(16,), activation="tanh", solver="adam",
                              max_iter=2000, random_state=seed)

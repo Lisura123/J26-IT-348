@@ -82,6 +82,8 @@ def verify_frozen_model(model_dir, pinned=PINNED_FILES, pinned_weights=PINNED_WE
 
 # ---------------------------------------------------------------- 2-3. rows and inputs
 
+# [GUIDE] F. Selects the final test rows: the OPERATION window (= the "test" side of the
+# 50/50 temporal split). It checks that the window column and the split file agree.
 def evaluation_rows(df, assignments, window=EVAL_WINDOW):
     """Index of the evaluation rows. OPERATION = temporal 'test' side of the
     split file; TRAINING (dry run only) = temporal 'train' side. The window
@@ -333,6 +335,13 @@ def host_latency(raw_rows, contract, n=LATENCY_N, warmup=LATENCY_WARMUP):
 
 # ---------------------------------------------------------------- runner
 
+# [GUIDE] F. FINAL INDEPENDENT TEST on the OPERATION window (scripts/06_evaluate_operation.py)
+# WHAT: the frozen, already-trained model predicts 3,000 unseen OPERATION readings.
+# WHY:  this is the honest performance estimate: the model never saw these runs, and no
+#       threshold, seed or hyperparameter was chosen with them. It was run ONCE
+#       (2026-10-16) and the script refuses to run it again.
+# EVIDENCE: results/operation_eval.md / .json (2,940 classified, 60 LOW_LIGHT skipped,
+#           accuracy 0.979, macro-F1 0.978, confusion matrix, OPEN/SHORT recall 1.000).
 def run_evaluation(df, assignments, model_dir, dataset_sha256, split_meta=None,
                    confirm_final_test=False, dry_run_training=False, code_commit=None,
                    expected_dataset_sha256=DATASET_SHA256, pinned=PINNED_FILES,
@@ -356,11 +365,13 @@ def run_evaluation(df, assignments, model_dir, dataset_sha256, split_meta=None,
     if expected_runs is not None and part[GROUP_COLUMN].nunique() != expected_runs:
         raise ValueError(f"{window}: {part[GROUP_COLUMN].nunique()} runs, expected {expected_runs}")
 
+    # [GUIDE] F. Inference on the OPERATION rows (labels removed first; nothing is fitted).
     pred, status = predict_frozen(part, contract)
     cls = (pred["prediction_status"] == "CLASSIFIED").to_numpy()
     y = part.loc[cls, LABEL_COLUMN].to_numpy(dtype=object)
     p = pred.loc[cls, "predicted_label"].to_numpy(dtype=object)
     runs = part.loc[cls, GROUP_COLUMN].to_numpy(dtype=object)
+    # [GUIDE] F. Accuracy, precision, recall, macro-F1 and confusion matrix of the final test.
     metrics = classification_metrics(y, p)
     cm = np.asarray(metrics["confusion_matrix"], dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):

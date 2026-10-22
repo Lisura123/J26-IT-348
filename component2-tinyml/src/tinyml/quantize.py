@@ -188,6 +188,15 @@ def build_tanh_lut(s_z1):
     return np.clip(rnd(QMAX * np.tanh(t * s_z1)), -QMAX, QMAX).astype(np.int64)
 
 
+# [GUIDE] G. INT8 quantisation (docs/QUANTIZATION.md)
+# WHAT: converts the float weights to 8-bit integers (int8) with fixed scales, plus a
+#       256-entry int8 tanh lookup table, so the ESP32 can run the MLP with integer maths.
+# WHY:  smaller weights and faster integer arithmetic on a microcontroller.
+# HOW:  scales from max-abs values over status-OK TRAINING rows only (no OPERATION data).
+# RESULT: agreement with the float model 1.000 on 2,924 TRAINING rows, 0 changed
+#       predictions, 0 OPEN/SHORT changes (results/quantization_report.md).
+# STILL UNVERIFIED IN THE REPO: no ESP32 flash/RAM/latency measurement is committed
+#       (docs/ESP32_INTEGRATION.md, checklist H3-H7 NOT_EXECUTED).
 def quantize_model(contract, contract_sha256, z_calib, calibration_info=None):
     """Derive INT8 parameters from the float contract and calibration inputs
     z_calib (scaled status-OK TRAINING rows, float32 device values)."""
@@ -239,6 +248,8 @@ def quantize_input(z, inv_sx):
     return out, clips
 
 
+# [GUIDE] G. The integer forward pass (same arithmetic as firmware/pv_fault/pv_mlp_int8.c):
+# int8 inputs x int8 weights + int32 bias -> fixed-point rescale -> tanh lookup -> layer 2.
 def int8_core(qx, q):
     """Integer core for one reading: int8 inputs -> int32 output accumulators.
     Returns (acc2, k, hq, lut_clips)."""

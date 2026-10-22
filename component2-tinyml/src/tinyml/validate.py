@@ -83,6 +83,11 @@ def _has(df, *cols):
 
 # ---------------------------------------------------------------- checks
 
+# [GUIDE] A. Dataset validation: refuse model predictions as training labels
+# WHAT: stops if the file has prediction columns (predicted_label, confidence, ...).
+# WHY:  a model's own outputs are not ground truth; training on them would be circular.
+# INPUT: a DataFrame.  OUTPUT: nothing, or a ValueError.
+# EVIDENCE: results/dataset_validation.md (member2_fault_predictions.csv is reference only).
 def assert_not_predictions(df, name="dataset"):
     """Refuse model-output files as ground truth for training."""
     found = [c for c in PREDICTION_COLUMNS if c in df.columns]
@@ -102,6 +107,12 @@ def check_schema(df):
             "timestamps_not_utc_z": bad_ts}
 
 
+# [GUIDE] A. Fault labels
+# WHAT: counts rows per label and lists unknown labels and labels with no rows.
+# WHY:  all 5 classes (NORMAL, PARTIAL_SHADING, DUST, OPEN_CIRCUIT, SHORT_CIRCUIT)
+#       must exist with the exact names used on the ESP32 and in Member 3's FL.
+# OUTPUT: {"counts", "unknown", "absent"}; validate_dataset() turns problems into errors.
+# EVIDENCE: results/dataset_validation.md (1,200 rows per class).
 def check_labels(df):
     counts = df[LABEL_COLUMN].value_counts().to_dict()
     return {"counts": {k: int(v) for k, v in counts.items()},
@@ -109,6 +120,11 @@ def check_labels(df):
             "absent": [l for l in LABELS if l not in counts]}
 
 
+# [GUIDE] A. Missing values and sensor error codes
+# WHAT: NaN count per column, plus DS18B20 error codes (-127 / -999) in the panel probes.
+# WHY:  a missing or error reading must never be treated as a real measurement.
+# OUTPUT: {"nan_by_column", "temp_sentinels"}; any NaN is an error in validate_dataset().
+# EVIDENCE: results/dataset_validation.md (no missing values, no error codes).
 def check_missing(df):
     na = df.isna().sum()
     sentinels = {c: int(df[c].isin(TEMP_SENTINELS).sum())
@@ -117,6 +133,12 @@ def check_missing(df):
             "temp_sentinels": {c: n for c, n in sentinels.items() if n}}
 
 
+# [GUIDE] A. Duplicate records
+# WHAT: duplicate record_id, duplicate (device_id, timestamp) pairs, and rows that are
+#       identical except for record_id.
+# WHY:  duplicates could appear in both train and test and inflate the scores.
+# OUTPUT: counts per duplicate type (record_id / device-timestamp duplicates are errors).
+# EVIDENCE: results/dataset_validation.md.
 def check_duplicates(df):
     out = {}
     if "record_id" in df:
@@ -190,6 +212,12 @@ def check_run_overlaps(df):
     return {"same_device": same, "cross_site": cross}
 
 
+# [GUIDE] A. Invalid sensor readings / physical ranges
+# WHAT: min, max and out-of-range counts for every sensor, using PHYSICAL_LIMITS above.
+# WHY:  values outside what the panel and sensors can produce point to sensor or logging faults.
+# HOW:  limits come from an ASSUMED panel datasheet (see the PHYSICAL_LIMITS sources), so
+#       out-of-range values are reported as warnings, never changed or deleted.
+# EVIDENCE: results/dataset_validation.md (ranges table, lux saturation counts).
 def check_ranges(df):
     out = {}
     for c, (lo, hi, src) in PHYSICAL_LIMITS.items():
@@ -205,6 +233,10 @@ def check_ranges(df):
     return out
 
 
+# [GUIDE] A. Physical consistency: P = V x I
+# WHAT: checks power_mw == voltage_v * current_ma (V x mA = mW) within a small tolerance.
+# WHY:  if the three readings disagree, at least one of them is wrong.
+# EVIDENCE: results/dataset_validation.md (largest residual well below the 0.5 mW tolerance).
 def check_power(df, tol_mw=POWER_TOLERANCE_MW):
     """power_mw must equal voltage_v * current_ma (V x mA = mW)."""
     resid = df["power_mw"] - df["voltage_v"] * df["current_ma"]
@@ -212,6 +244,15 @@ def check_power(df, tol_mw=POWER_TOLERANCE_MW):
             "rows_over_tol": int((resid.abs() > tol_mw).sum()), "tol_mw": tol_mw}
 
 
+# [GUIDE] A. Data leakage check
+# WHAT: (1) for each label-proxy column (health_score) it measures how well that column
+#       ALONE predicts the label, run-wise; (2) it flags that a random ROW split is unsafe.
+# WHY:  a column that already "knows" the answer must never be a model input, and the
+#       60 near-identical readings of one run must never be split across train and test.
+# HOW:  depth-3 decision tree, StratifiedGroupKFold grouped by run_id (chance is about 20 %).
+# OUTPUT: {"single_column_runwise_accuracy", "random_row_split_unsafe"}.
+# EVIDENCE: results/dataset_validation.md: health_score alone gives 74.6 % run-wise
+# accuracy, so it is excluded from model inputs (contract.LEAKAGE_COLUMNS).
 def check_leakage(df, seed=0):
     """Columns that reveal the label. For each leakage column, run-wise
     accuracy of a depth-3 tree on that column alone (chance ~ 1/5)."""
@@ -332,6 +373,12 @@ def provenance_warnings(df, timestamps, overlaps, ranges, sites=None):
 
 # ---------------------------------------------------------------- driver
 
+# [GUIDE] A. Entry point of the dataset validation (called by scripts/01_validate_dataset.py)
+# WHAT: runs every check above and sorts problems into errors (data must not be used)
+#       and warnings (usable, but must be reported).
+# INPUT: the combined pv_fault_dataset.csv (+ optional per-class files, sites.csv).
+# OUTPUT: a dict with every check result plus "errors" and "warnings".
+# EVIDENCE: results/dataset_validation.md -> "PASS (with warnings)". Nothing is modified.
 def validate_dataset(combined, parts=None, sites=None, predictions=None):
     """Run every check. `parts` maps label -> per-class DataFrame."""
     assert_not_predictions(combined, "combined dataset")

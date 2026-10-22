@@ -63,6 +63,10 @@ def protocol_folds(df, assignments, protocol, allow_final_test=False):
     return [f for f in iter_folds(training, assignments, base) if len(f[1]) and len(f[2])]
 
 
+# [GUIDE] D/F. Phase 7 model comparison (scripts/04_compare_baselines.py)
+# For every protocol fold (5-fold CV and leave-one-site-out, TRAINING window only), every
+# feature set and every model: fit on the train fold, predict the held-out fold, score it.
+# EVIDENCE: results/baselines_phase7.json (286 fits) and results/baselines_phase7.md.
 def run_comparison(df, assignments, protocols=PROTOCOLS, models=MODEL_NAMES,
                    feature_sets=FEATURE_SETS, seeds=DEFAULT_SEEDS, allow_final_test=False,
                    progress=print):
@@ -94,6 +98,7 @@ def run_comparison(df, assignments, protocols=PROTOCOLS, models=MODEL_NAMES,
                         continue                    # e.g. rules need temp_spread (not in raw8)
                     for seed in (seeds if model_name in STOCHASTIC else seeds[:1]):
                         t0 = time.perf_counter()
+                        # [GUIDE] D. Create one candidate model, train it on the fold, predict the held-out runs.
                         model = make_model(model_name, seed=seed, feature_names=names)
                         model.fit(X_tr, y_tr)
                         pred = model.predict(X_te)

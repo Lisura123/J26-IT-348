@@ -44,6 +44,8 @@ def check_dataset_sha256(sha):
     return sha
 
 
+# [GUIDE] E. Which rows are used for final training: the TRAINING window only (3,000 rows),
+# and they must be exactly the "train" side of the saved 50/50 temporal split.
 def final_training_rows(df, assignments=None):
     """Index of the rows used for final fitting: the TRAINING window only.
 
@@ -61,6 +63,11 @@ def final_training_rows(df, assignments=None):
     return idx
 
 
+# [GUIDE] E. FINAL MLP TRAINING (called by scripts/05_train_final.py, line `train_final(df, ...)`)
+# WHAT: fits the features, the scaler and the MLP on TRAINING rows only.
+# INPUT: the dataset (only TRAINING rows are used).  OUTPUT: fitted config + model + facts.
+# EVIDENCE: models/model_contract.json, models/training_metadata.json (2,924 OK rows used,
+#           76 skipped as LUX_SATURATED, 142 iterations, converged).
 def train_final(df, seed=FINAL_SEED, assignments=None):
     """Fit the feature pipeline and the MLP on TRAINING rows only.
 
@@ -71,15 +78,29 @@ def train_final(df, seed=FINAL_SEED, assignments=None):
     idx = final_training_rows(df, assignments)
     train = df.loc[idx]
     assert (train[WINDOW_COLUMN] == FINAL_WINDOW).all(), "non-TRAINING rows in final training"
+    # [GUIDE] E. Step 1: learn V_ref and the scaler from TRAINING rows only.
     cfg = fit_pipeline(train, fold=FINAL_FIT_TAG)
+    # [GUIDE] E. Step 2: the 8 input features. X = scaled pv8 features, one row per OK reading.
     X, status = transform(train, cfg)
     keep = train.index[(status == STATUS_OK).to_numpy()]
+    # [GUIDE] E. Step 3: the correct answers. y = the dataset `label` of the same OK rows,
+    # in the same order as X (row i of X belongs to label i of y).
     y = train.loc[keep, LABEL_COLUMN].to_numpy()
     missing = [l for l in LABELS if l not in set(y)]
     if missing:
         raise ValueError(f"classes missing from the training rows: {missing}")
+    # [GUIDE] E. Step 4: create the (untrained) 8-16-5 tanh MLP, seed 0.
     model = make_model(FINAL_MODEL, seed=seed)
+    # [GUIDE] E. Step 5: TRAINING. model.fit(X, y)
+    #   X = the 8 PV input features, y = the correct fault labels.
+    #   fit = the model starts with random weights and repeatedly adjusts its 229 weights
+    #         (adam optimiser) so its predicted labels match y as closely as possible.
     model.fit(X, y)
+    # [GUIDE] E. Step 6: model.predict(X) = INFERENCE: use the learned weights to output a label.
+    # Here it predicts the SAME training rows, so the result (training_fit_accuracy = 1.0 in
+    # models/training_metadata.json) is only a fit check, NOT a performance result.
+    # Real performance: 5-fold CV (results/baselines_phase7.md) and the single OPERATION
+    # test (results/operation_eval.md).
     fit_pred = model.predict(X)
     skipped = status[status != STATUS_OK]
     return {

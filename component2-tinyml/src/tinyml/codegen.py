@@ -156,6 +156,12 @@ def golden_header(g):
                                               "origins: " + ", ".join(sorted(g["origins"]))])
 
 
+# [GUIDE] H. Export to C for the ESP32: writes pv_feature_params.h (gates, V_ref, scaler),
+# pv_model_f32.h (float weights), pv_model_int8.h (int8 weights, scales, tanh table) and,
+# if given, golden_vectors.h. The official copies are committed in
+# firmware/pv_fault/generated/ and tests/host_c/golden_vectors.h.
+# Generated from the saved contract; never typed by hand. Checked by host C tests
+# (tests/test_codegen.py). Real ESP32 build/measurements: see docs/ESP32_INTEGRATION.md.
 def write_headers(out_dir, contract, contract_sha256, cfg, q, golden=None):
     """Write the firmware headers (and golden vectors if given); returns paths."""
     out = Path(out_dir)

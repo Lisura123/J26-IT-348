@@ -41,6 +41,11 @@ def _copy(w):
     return {k: np.array(v, dtype=np.float64, copy=True) for k, v in w.items()}
 
 
+# [GUIDE] G. Pruning study E1 (docs/PRUNING.md): can weights be removed WITHOUT retraining?
+# Unstructured = set the 10/20/30 % smallest weights to 0 (shape stays 8-16-5, 229 values).
+# RESULT: predictions unchanged on TRAINING rows for every variant, but no measured ESP32
+# benefit (estimated saving at most 36-85 B) -> "evaluated, not adopted"
+# (results/pruning_study.md, docs/PRUNING.md section 9.4).
 def unstructured_prune(weights, fraction):
     """Zero the round(fraction * 208) smallest-magnitude weights of W1 and W2
     together. Ties are broken by layer (W1 first) and row-major position,
@@ -66,6 +71,8 @@ def unit_importance(weights):
     return np.abs(weights["W1"]).sum(axis=0) * np.abs(weights["W2"]).sum(axis=1)
 
 
+# [GUIDE] G. Structured = remove whole hidden neurons (16 -> 14/13/11). This changes the
+# 229-parameter layout, so it would break the FL layout (PRUNING.md criterion 4).
 def structured_prune(weights, n_units):
     """Remove the n_units hidden units with the lowest importance (ties: lower
     index first). Returns (reduced weights, sorted removed unit indices)."""

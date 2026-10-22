@@ -72,6 +72,12 @@ RULES_PLACEHOLDER = {
 
 # ---------------------------------------------------------------- weights
 
+# [GUIDE] E. Export of the trained parameters
+# WHAT: reads W1, b1, W2, b2 out of the scikit-learn model.
+# WHY:  the ESP32, Member 3's FL and the digital twin cannot run scikit-learn; they need
+#       plain numbers in a fixed layout and a fixed class order.
+# HOW:  scikit-learn sorts classes alphabetically, so W2/b2 columns are reordered here to
+#       LABELS order; otherwise every exported class would be mislabelled.
 def extract_weights(model):
     """Weights of a fitted 8-16-5 tanh MLPClassifier in PARAM_LAYOUT order.
 
@@ -100,6 +106,8 @@ def check_shapes(weights):
             raise ValueError(f"{name} has shape {np.shape(weights[name])}, expected {shape}")
 
 
+# [GUIDE] H. The 229 parameters as one vector: W1 (8x16=128) + b1 (16) + W2 (16x5=80) + b2 (5),
+# each row-major. This is the same layout as Member 3's FL code (PARAM_LAYOUT above).
 def flatten(weights):
     """229-vector: W1, b1, W2, b2, each row-major (same as Member 3's mlp.flatten)."""
     check_shapes(weights)
@@ -123,6 +131,9 @@ def weights_sha256(weights):
     return hashlib.sha256(flatten(weights).astype("<f8").tobytes()).hexdigest()
 
 
+# [GUIDE] E. Inference maths (training vs inference): training CHANGES the weights;
+# inference only USES them. p = softmax(tanh(x W1 + b1) W2 + b2); label = argmax(p),
+# confidence = max(p).
 def forward(weights, X):
     """Reference forward pass. Returns (logits, probabilities), LABELS order."""
     X = np.asarray(X, dtype=np.float64)
@@ -209,6 +220,9 @@ def file_sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+# [GUIDE] E/H. Where the trained model is SAVED: models/model_contract.json (weights, layout,
+# feature config, provenance), feature_config.json, training_metadata.json and
+# manifest.json (SHA-256 of each file, so any change is detected).
 def write_artifacts(out_dir, contract, cfg, metadata):
     """Write the three files and a manifest of their SHA-256 hashes."""
     out = Path(out_dir)
@@ -294,6 +308,9 @@ def verify_artifacts(out_dir):
 
 # ---------------------------------------------------------------- inference from the contract
 
+# [GUIDE] E. Inference from the saved contract only (no scikit-learn): raw sensor rows ->
+# gates -> 8 features -> forward pass. Skipped readings get no label (never NORMAL by default).
+# Used for the final OPERATION test (holdout.predict_frozen).
 def predict_raw(df, contract):
     """Classify raw sensor rows with only the contract (no scikit-learn).
 

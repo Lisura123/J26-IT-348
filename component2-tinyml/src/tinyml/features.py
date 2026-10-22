@@ -102,6 +102,13 @@ class FeatureConfig:
 
 # ---------------------------------------------------------------- stage A
 
+# [GUIDE] C. Input quality gates (same rules in training, evaluation and on the ESP32)
+# WHAT: labels every reading OK / LOW_LIGHT / LUX_SATURATED / INVALID_INPUT.
+# WHY:  the model must not guess on readings it cannot interpret (dark, saturated light
+#       sensor, missing or impossible values). Rows are never deleted; they are skipped
+#       and counted (coverage is reported next to every metric).
+# NOTE: 2,400 lx and 100,000 lx are PLACEHOLDER thresholds (docs/FEATURES.md section 7).
+# EVIDENCE: results/feature_validation.md; results/operation_eval.md (60 LOW_LIGHT readings skipped).
 def input_status(df, cfg):
     """OK / LOW_LIGHT / LUX_SATURATED / INVALID_INPUT for every row.
 
@@ -152,6 +159,17 @@ def physical_features(df, cfg, status=None):
     if len(d):
         klx = _klux(d, cfg)
         a, b, c = cfg.vref["a"], cfg.vref["b"], cfg.vref["c"]
+        # [GUIDE] C. The 8 PV-specific features (docs/FEATURES.md section 2):
+        #  0 v_deficit   = V_ref(light, temperature) - measured V: how far the voltage is below a
+        #                healthy panel at the same light and temperature (high for SHORT/SHADING)
+        #  1 i_norm      = current per kilolux: current corrected for light level (low for DUST/SHADING)
+        #  2 p_norm      = power per kilolux: performance-ratio proxy (drops for every fault)
+        #  3 dust_vo_v   = raw dust-sensor voltage (high for DUST; not a calibrated concentration)
+        #  4 temp_spread = |T1 - T2| across the panel (hotspot under PARTIAL_SHADING)
+        #  5 temp_rise   = mean panel temperature - ambient (heat not converted to power)
+        #  6 voltage_v   = raw voltage (about 0 for SHORT_CIRCUIT)
+        #  7 current_ma  = raw current (about 0 for OPEN_CIRCUIT)
+        # Ratios use kilolux only as a scale; no lux -> W/m^2 calibration is assumed.
         v_ref = a + b * np.log(klx) + c * (_panel_temp(d) - cfg.t_ref_c)
         out.loc[ok, "v_deficit"] = v_ref - d["voltage_v"]
         out.loc[ok, "i_norm"] = d["current_ma"] / klx
@@ -166,6 +184,14 @@ def physical_features(df, cfg, status=None):
 
 # ---------------------------------------------------------------- fitting
 
+# [GUIDE] C. Fitting on TRAINING data only (leakage prevention)
+# WHAT: learns V_ref (a, b, c) and the scaler mean/std from the rows it is given.
+# WHY:  if the scaler saw test rows, test information would leak into training and the
+#       test score would be too optimistic. So this is always called with training rows
+#       only (fold_matrices below, train.train_final); the test side reuses the fitted values.
+# HOW:  V_ref = least squares on NORMAL, status-OK training rows; scaler = mean and
+#       population std of the 8 features over status-OK training rows.
+# INPUT: training rows.  OUTPUT: a fitted FeatureConfig (saved as models/feature_config.json).
 def fit_pipeline(train_df, cfg=None, fold=None):
     """Fit V_ref and the scaler on training rows only; return a fitted config.
 
@@ -195,6 +221,9 @@ def fit_pipeline(train_df, cfg=None, fold=None):
     return cfg
 
 
+# [GUIDE] C. Applying the fitted features: z = (x - mean) / std
+# Used for training AND inference; it never refits anything.
+# OUTPUT: X (float32, one row per OK reading, 8 columns) and the status of every row.
 def transform(df, cfg):
     """Stage A + B. Returns (X, status): X is a float32 array with one row per
     status-OK reading, in df order; status covers every row of df."""
@@ -210,6 +239,8 @@ def transform(df, cfg):
     return X, status
 
 
+# [GUIDE] C. One fold: fit_pipeline on train rows, then transform train and test with the
+# SAME fitted values (no refit on the test side). Used by the 5-fold comparison.
 def fold_matrices(df, train_idx, test_idx, cfg=None, fold=None):
     """Fit on df.loc[train_idx], apply to df.loc[test_idx] without refitting.
 
