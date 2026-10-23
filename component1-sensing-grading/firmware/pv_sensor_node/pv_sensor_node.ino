@@ -654,8 +654,18 @@ void loop() {
   float rawVoltage = rawCurrent / 1000.0 * (LOAD_OHMS + SHUNT_OHMS);
   float rawPower = rawVoltage * rawCurrent;
 
-  float lightV = ads.computeVolts(ads.readADC_SingleEnded(0));
+  // TEMT6000 through ADS1115 A0
+  int rawADC = ads.readADC_SingleEnded(0);
+  float lightV = ads.computeVolts(rawADC);
   float rawLux = lightV * 200.0;   // rough value with the 10k resistor on the board
+
+  // DEBUG: is the limit in the sensor (voltage) or in the formula (lux)?
+  Serial.print("Light ADC: ");
+  Serial.print(rawADC);
+  Serial.print(" | Voltage: ");
+  Serial.print(lightV, 4);
+  Serial.print(" V | Calculated lux: ");
+  Serial.println(rawLux, 1);
 
   float rawSurface = probes.getTempC(PANEL_PROBE);
   float rawAmbient = probes.getTempC(AIR_PROBE);
