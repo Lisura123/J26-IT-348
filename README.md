@@ -88,39 +88,64 @@ Working rules:
 
 ## 4. Architecture and data flow
 
-```mermaid
-flowchart LR
-  subgraph EDGE["Edge: ESP32 node per site"]
-    S["Sensors<br/>INA219, TEMT6000 + ADS1115,<br/>2 x DS18B20, DSM501B"]
-    C1["C1 · Data quality → Kalman →<br/>entropy weights → fuzzy grade"]
-    C2["C2 · TinyML INT8 MLP<br/>fault class + confirmation"]
-    R["Relay<br/>(isolation)"]
-    S --> C1 --> C2 --> R
-  end
-
-  subgraph NET["Links"]
-    W["WiFi"]
-    L["LTE"]
-    LO["LoRa"]
-  end
-
-  subgraph BACK["Backend"]
-    MQ["Mosquitto MQTT<br/>+ FastAPI ingest"]
-    DB[("MongoDB Atlas<br/>solar_pv")]
-    C3["C3 · Federated learning engine<br/>compression · scheduler · async aggregation"]
-  end
-
-  subgraph APP["Operations"]
-    C4["C4 · Digital twin<br/>Faiman + single diode + conformal band"]
-    X["SHAP + physics cause<br/>+ maintenance rules"]
-    UI["Angular dashboard<br/>Admin · Engineer · Manager"]
-  end
-
-  EDGE --> NET --> MQ --> DB
-  DB <--> C3
-  C3 -. "global model (OTA)" .-> C2
-  DB --> C4 --> X --> UI
-  C4 -- "twin_output" --> DB
+```text
+  EDGE  (one ESP32 node per site)
+ +----------------------------------------------+
+ | Sensors                                      |
+ |   INA219, TEMT6000 + ADS1115,                |
+ |   2 x DS18B20, DSM501B                       |
+ +----------------------------------------------+
+                        |
+                        v
+ +----------------------------------------------+
+ | C1  Health grading                           |
+ |   data quality -> Kalman -> entropy weights  |
+ |   -> fuzzy grade (0 to 100)                  |
+ +----------------------------------------------+
+                        |
+                        v
+ +----------------------------------------------+
+ | C2  TinyML INT8 MLP                          |<-------------+
+ |   fault class + confirmation                 |              |
+ +----------+-----------------------+-----------+              |
+            |                       |                          |
+            v                       |                          |
+ +-----------------------+          |                          |
+ | Relay  (isolation)    |          |                          |
+ +-----------------------+          |                          |
+                                    |                          |
+  LINKS               WiFi / LTE / LoRa                        | global model
+                                    |                          | (OTA update)
+  BACKEND                           v                          |
+ +----------------------------------------------+              |
+ | Mosquitto MQTT + FastAPI ingest              |              |
+ |   (data contract validation)                 |              |
+ +----------------------------------------------+              |
+                        |                                      |
+                        v                                      |
+ +----------------------------------------------+      +-------+-------------+
+ | MongoDB Atlas  (database: solar_pv)          |<---->| C3  Federated       |
+ |   sensor_readings, sensor_health,            |      |   learning engine   |
+ |   fault_predictions, fl_*, twin_output       |      |   compression,      |
+ +----------------------------------------------+      |   scheduler, async  |
+                        |           ^                  |   aggregation       |
+                        |           |  twin_output     +---------------------+
+  OPERATIONS            v           |
+ +----------------------------------------------+
+ | C4  Digital twin                             |
+ |   Faiman + single diode + conformal band     |
+ +----------------------------------------------+
+                        |
+                        v
+ +----------------------------------------------+
+ | SHAP + physics cause + maintenance rules     |
+ +----------------------------------------------+
+                        |
+                        v
+ +----------------------------------------------+
+ | Angular dashboard                            |
+ |   Admin  /  Engineer  /  Manager             |
+ +----------------------------------------------+
 ```
 
 1. **Component 1** reads the sensors every 2 seconds, cleans and grades each reading, and sends batches to the backend (`sensor_readings`, `sensor_health`).
