@@ -262,7 +262,3 @@ Six pilot sites around Colombo (Asia/Colombo time zone), each with one ESP32 nod
 | Member 4 | Physics-Informed Digital Twin and Explainable Dashboard |
 
 **Module:** IT4010 Research Project · Faculty of Computing, Sri Lanka Institute of Information Technology (SLIIT)
-
----
-
-*This repository is academic research work. Hardware results are from small bench prototypes and should not be read as field validation.*
