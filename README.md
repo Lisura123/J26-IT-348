@@ -2,6 +2,8 @@
 
 **Group J26-IT-348 · IT4010 Research Project · SLIIT (2026)**
 
+**Repository:** [https://github.com/Lisura123/J26-IT-348](https://github.com/Lisura123/J26-IT-348)
+
 An end-to-end cyber-physical framework that monitors small solar PV installations from the sensor up to the operator's screen. Low-cost ESP32 nodes grade panel health and classify faults on the device, a protocol-aware federated learning engine keeps the on-device model up to date across sites without sharing raw data, and a physics-informed digital twin explains every loss on a role-based dashboard.
 
 > Industry partner: **Neth Digital (Pvt) Ltd.**, which provides solar monitoring data for the project.
@@ -40,10 +42,10 @@ Low power on a PV panel can mean a fault (dust, shading, open circuit, short cir
 
 | # | Component | Core techniques | Branch |
 |---|---|---|---|
-| 1 | **Adaptive Multi-Sensor PV Panel Health Grading** | Data quality rules, 1D Kalman filtering, pvlib single-diode reference, entropy weighting, Mamdani fuzzy logic (health score 0 to 100) | [`component1-sensing-grading`](../../tree/component1-sensing-grading) |
-| 2 | **PV-Specific TinyML Fault Detection** | 8-16-5 MLP on physics features, INT8 quantisation, fault confirmation, relay isolation, ESP-IDF component | [`component2-tinyml`](../../tree/component2-tinyml) |
-| 3 | **Protocol-Aware Federated Learning and Backend** | Flower FedAvg baseline, per-protocol compression (float32 / int8 / top-k), reliability-aware scheduling, asynchronous staleness and fairness weighting | [`component3-federated-backend`](../../tree/component3-federated-backend) |
-| 4 | **Physics-Informed Digital Twin and Explainable Dashboard** | Faiman thermal model, De Soto single-diode model, split conformal bands, SHAP explanations, rule-based maintenance, FastAPI + Angular role-based dashboard | [`component4-digital-twin-dashboard`](../../tree/component4-digital-twin-dashboard) |
+| 1 | **Adaptive Multi-Sensor PV Panel Health Grading** | Data quality rules, 1D Kalman filtering, pvlib single-diode reference, entropy weighting, Mamdani fuzzy logic (health score 0 to 100) | [`component1-sensing-grading`](https://github.com/Lisura123/J26-IT-348/tree/component1-sensing-grading) |
+| 2 | **PV-Specific TinyML Fault Detection** | 8-16-5 MLP on physics features, INT8 quantisation, fault confirmation, relay isolation, ESP-IDF component | [`component2-tinyml`](https://github.com/Lisura123/J26-IT-348/tree/component2-tinyml) |
+| 3 | **Protocol-Aware Federated Learning and Backend** | Flower FedAvg baseline, per-protocol compression (float32 / int8 / top-k), reliability-aware scheduling, asynchronous staleness and fairness weighting | [`component3-federated-backend`](https://github.com/Lisura123/J26-IT-348/tree/component3-federated-backend) |
+| 4 | **Physics-Informed Digital Twin and Explainable Dashboard** | Faiman thermal model, De Soto single-diode model, split conformal bands, SHAP explanations, rule-based maintenance, FastAPI + Angular role-based dashboard | [`component4-digital-twin-dashboard`](https://github.com/Lisura123/J26-IT-348/tree/component4-digital-twin-dashboard) |
 
 Each component folder has its own detailed README with methods, results, limitations and run instructions.
 
